@@ -180,16 +180,16 @@ export default async function OverviewPage() {
     {
       title: "Highest Funding",
       titleColor: "yellow" as const,
-      source: "Velo",
+      source: "Internal / Velo",
       rows: topFunding(derivatives),
-      emptyMessage: "No funding data — run ingestion first",
+      emptyMessage: "Funding data loading — check the Funding page for live rates",
     },
     {
       title: "Highest Basis",
       titleColor: "yellow" as const,
-      source: "Velo",
+      source: "Internal / Velo",
       rows: topBasis(derivatives),
-      emptyMessage: "No basis data — run ingestion first",
+      emptyMessage: "Basis data loading — check the Basis page for live term structure",
     },
     {
       title: "Capacity Constraints",

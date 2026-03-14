@@ -3,8 +3,8 @@ Dated futures basis service.
 
 Venues
 ------
-  deribit  -- sys.path injection: get_ad_listed_expiry_term_structure (snapshot),
-              get_listed_basis_history (history), up to 89 days
+  deribit  -- direct REST: Deribit public API (get_book_summary_by_currency for
+              snapshot, get_tradingview_chart_data for history). No key needed.
   binance  -- direct REST: CURRENT_QUARTER + NEXT_QUARTER USDT-margined contracts
   okx      -- direct REST: linear USDT-settled FUTURES instruments
   bybit    -- direct REST: LinearFutures category, Trading status
@@ -22,40 +22,15 @@ from __future__ import annotations
 
 import asyncio
 import calendar
-import sys
 import time
 from dataclasses import dataclass
-from datetime import UTC, datetime
-from pathlib import Path
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
 import structlog
 
 log = structlog.get_logger(__name__)
-
-# ---- Reference repo path injection (read-only) ------------------------------
-_EXODUS_ROOT = Path("/home/ec2-user/workspace/exodus")
-_GRIFF_COMMON = Path("/home/ec2-user/workspace/griff/common")
-
-for _p in [_EXODUS_ROOT, _GRIFF_COMMON]:
-    if _p.exists() and str(_p) not in sys.path:
-        sys.path.insert(0, str(_p))
-
-try:
-    from api_wrappers.ad_derivs_funcs import (  # type: ignore[import]
-        get_ad_listed_expiry_term_structure as _deribit_term_structure,
-        get_listed_basis_history as _deribit_basis_history,
-    )
-    from keys import AD_DERIVS_KEY as _AD_DERIVS_KEY  # type: ignore[import]
-
-    _HAS_DERIBIT = True
-except Exception as _e:
-    _deribit_term_structure = None
-    _deribit_basis_history = None
-    _AD_DERIVS_KEY = None
-    _HAS_DERIBIT = False
-    log.warning("deribit_basis_import_failed", error=str(_e))
 
 # ---- Constants ---------------------------------------------------------------
 _SNAPSHOT_TTL = 60.0
@@ -156,46 +131,66 @@ def _snap_cache_set(symbol: str, rows: list[BasisRow]) -> None:
 # ---- Per-venue snapshot fetchers ---------------------------------------------
 
 async def _fetch_deribit_snapshot(symbol: str) -> list[BasisRow]:
-    if not _HAS_DERIBIT or _deribit_term_structure is None:
-        return []
+    """Fetch Deribit dated futures via public REST — no API key required."""
     sym = symbol.upper()
+    idx_name = f"{sym.lower()}_usd"
     try:
-        import pandas as pd
-
-        raw = await asyncio.to_thread(_deribit_term_structure, sym)
-        if raw is None or (hasattr(raw, "empty") and raw.empty):
-            return []
-        rows: list[BasisRow] = []
-        for _, r in raw.iterrows():
-            exp_ts = r.get("expirationTimestamp")
-            if exp_ts is None:
-                continue
-            expiry_dt = pd.to_datetime(exp_ts, utc=True).to_pydatetime()
-            dte = _dte(expiry_dt)
-            if dte <= 0:
-                continue
-            fp = _safe_float(r.get("underlyingPrice"))
-            ip = _safe_float(r.get("indexPrice"))
-            if fp is None or ip is None:
-                continue
-            busd = fp - ip
-            oi_coin = _safe_float(r.get("openInterest"))
-            rows.append(BasisRow(
-                venue="deribit",
-                contract=_fmt_contract(sym, expiry_dt),
-                expiry=expiry_dt.isoformat(),
-                days_to_expiry=dte,
-                futures_price=fp,
-                index_price=ip,
-                basis_usd=busd,
-                basis_pct_ann=_basis_ann(busd, ip, dte),
-                oi_coin=oi_coin,
-                oi_usd=oi_coin * ip if oi_coin else None,
-            ))
-        return rows
-    except Exception:
-        log.exception("deribit_snapshot_error", symbol=sym)
+        async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as c:
+            summary_r, idx_r = await asyncio.gather(
+                c.get(
+                    "https://www.deribit.com/api/v2/public/get_book_summary_by_currency",
+                    params={"currency": sym, "kind": "future"},
+                ),
+                c.get(
+                    "https://www.deribit.com/api/v2/public/get_index_price",
+                    params={"index_name": idx_name},
+                ),
+            )
+            summary_r.raise_for_status()
+            items = summary_r.json().get("result", [])
+            ip = _safe_float(idx_r.json().get("result", {}).get("index_price"))
+    except Exception as exc:
+        log.warning("deribit_snapshot_error", symbol=sym, error=str(exc))
         return []
+
+    if not ip:
+        return []
+
+    rows: list[BasisRow] = []
+    for item in items:
+        name = item.get("instrument_name", "")
+        if "PERPETUAL" in name:
+            continue
+        # Get expiry from instrument name (Deribit format: BTC-28MAR25)
+        expiry_dt = _parse_contract_expiry(name)
+        if expiry_dt is None:
+            continue
+        dte = _dte(expiry_dt)
+        if dte <= 0:
+            continue
+        fp = _safe_float(item.get("mark_price"))
+        if fp is None:
+            continue
+        busd = fp - ip
+        # OI from book summary is in USD for BTC/ETH futures
+        oi_usd = _safe_float(item.get("open_interest"))
+        vol_usd = _safe_float(item.get("volume_usd"))
+        if vol_usd is None:
+            vol = _safe_float(item.get("volume"))
+            vol_usd = vol * ip if vol is not None else None
+        rows.append(BasisRow(
+            venue="deribit",
+            contract=name,
+            expiry=expiry_dt.isoformat(),
+            days_to_expiry=dte,
+            futures_price=fp,
+            index_price=ip,
+            basis_usd=busd,
+            basis_pct_ann=_basis_ann(busd, ip, dte),
+            oi_usd=oi_usd,
+            volume_24h_usd=vol_usd,
+        ))
+    return sorted(rows, key=lambda r: r.days_to_expiry)
 
 
 async def _fetch_binance_snapshot(symbol: str) -> list[BasisRow]:
@@ -386,7 +381,9 @@ async def _fetch_cme_snapshot(symbol: str) -> list[BasisRow]:
     Uses latest daily close as futures price; Binance spot as BRR index proxy.
     Skips gracefully on 401/403 or missing subscription.
     """
-    if not _HAS_DERIBIT or not _AD_DERIVS_KEY or symbol.upper() != "BTC":
+    from app.core.config import settings as _settings
+    _AD_DERIVS_KEY = getattr(_settings, "amberdata_derivs_key", None) or None
+    if not _AD_DERIVS_KEY or symbol.upper() != "BTC":
         log.warning("cme_snapshot_skipped", reason="no_key_or_non_btc")
         return []
     sym = symbol.upper()
@@ -448,31 +445,82 @@ async def _fetch_cme_snapshot(symbol: str) -> list[BasisRow]:
 # ---- Per-venue history fetchers ----------------------------------------------
 
 async def _deribit_history(symbol: str, contract: str, days: int) -> list[BasisHistoryPoint]:
-    if not _HAS_DERIBIT or _deribit_basis_history is None:
-        return []
+    """
+    Fetch Deribit basis history via public TradingView OHLC API.
+    Returns daily candlestick basis data for the given contract.
+    """
     expiry_dt = _parse_contract_expiry(contract)
-    if not expiry_dt:
-        return []
-    lookback = min(days, 89)
+    now = datetime.now(UTC)
+    start = now - timedelta(days=min(days, 89))
+    now_ms = int(now.timestamp() * 1000)
+    start_ms = int(start.timestamp() * 1000)
+    sym = symbol.upper()
+    idx_inst = f"deribit_price_index:{sym.lower()}_usd"
+
     try:
-        df = await asyncio.to_thread(_deribit_basis_history, symbol.upper(), expiry_dt, lookback)
-        if df is None or (hasattr(df, "empty") and df.empty):
-            return []
-        result = []
-        for ts, row in df.iterrows():
-            ts_str = ts.isoformat() if hasattr(ts, "isoformat") else str(ts)
-            result.append(BasisHistoryPoint(
-                timestamp=ts_str,
-                basis_usd=_safe_float(row.get("basis_USD")),
-                basis_pct_ann=_safe_float(row.get("basis_%_annualized")),
-                futures_price=_safe_float(row.get("underlyingPrice")),
-                index_price=_safe_float(row.get("indexPrice")),
-                days_to_expiry=_safe_float(row.get("daysToExpiration")),
-            ))
-        return result
-    except Exception:
-        log.exception("deribit_history_error", contract=contract)
+        async with httpx.AsyncClient(timeout=15.0) as c:
+            fut_r, idx_r = await asyncio.gather(
+                c.get(
+                    "https://www.deribit.com/api/v2/public/get_tradingview_chart_data",
+                    params={
+                        "instrument_name": contract,
+                        "resolution": "1D",
+                        "start_timestamp": start_ms,
+                        "end_timestamp": now_ms,
+                    },
+                ),
+                c.get(
+                    "https://www.deribit.com/api/v2/public/get_tradingview_chart_data",
+                    params={
+                        "instrument_name": idx_inst,
+                        "resolution": "1D",
+                        "start_timestamp": start_ms,
+                        "end_timestamp": now_ms,
+                    },
+                ),
+            )
+            fut_data = fut_r.json().get("result", {})
+            idx_data = idx_r.json().get("result", {})
+    except Exception as exc:
+        log.warning("deribit_history_error", contract=contract, error=str(exc))
         return []
+
+    fut_ticks = fut_data.get("ticks", [])
+    fut_close = fut_data.get("close", [])
+    idx_ticks = idx_data.get("ticks", [])
+    idx_close = idx_data.get("close", [])
+
+    if not fut_ticks or not fut_close:
+        return []
+
+    idx_map = {t: p for t, p in zip(idx_ticks, idx_close)}
+
+    result: list[BasisHistoryPoint] = []
+    for tick_ms, fut_price in zip(fut_ticks, fut_close):
+        try:
+            ts = datetime.fromtimestamp(tick_ms / 1000, tz=UTC)
+        except Exception:
+            continue
+        idx_price = idx_map.get(tick_ms)
+        if idx_price is None and idx_close:
+            idx_price = idx_close[-1]
+        if idx_price is None or idx_price == 0:
+            continue
+        fp = _safe_float(fut_price)
+        ip = _safe_float(idx_price)
+        if fp is None or ip is None:
+            continue
+        busd = fp - ip
+        dte_then = max(1, (expiry_dt - ts).days) if expiry_dt else 30
+        result.append(BasisHistoryPoint(
+            timestamp=ts.isoformat(),
+            basis_usd=busd,
+            basis_pct_ann=_basis_ann(busd, ip, dte_then),
+            futures_price=fp,
+            index_price=ip,
+            days_to_expiry=float(dte_then),
+        ))
+    return sorted(result, key=lambda p: p.timestamp)
 
 
 async def _binance_history(symbol: str, contract: str, days: int) -> list[BasisHistoryPoint]:
@@ -609,7 +657,9 @@ async def _bybit_history(symbol: str, contract: str, days: int) -> list[BasisHis
 
 
 async def _cme_history(symbol: str, contract: str, days: int) -> list[BasisHistoryPoint]:
-    if not _HAS_DERIBIT or not _AD_DERIVS_KEY or symbol.upper() != "BTC":
+    from app.core.config import settings as _settings
+    _AD_DERIVS_KEY = getattr(_settings, "amberdata_derivs_key", None) or None
+    if not _AD_DERIVS_KEY or symbol.upper() != "BTC":
         return []
     expiry_dt = _parse_contract_expiry(contract)
     if not expiry_dt:

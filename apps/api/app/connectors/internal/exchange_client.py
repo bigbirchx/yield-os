@@ -113,28 +113,55 @@ async def get_current_funding_rate(
     """
     Return the current (next-period predicted) annualized funding rate.
 
-    Supports: 'binance', 'okx'.  Returns 0.0 on failure or unsupported venue.
+    Supports: 'binance', 'okx'.  Falls back to direct REST when reference
+    codebase is unavailable. Returns 0.0 on failure or unsupported venue.
     """
-    if not _HAS_APIS:
-        log.warning("internal_apis_unavailable", method="get_current_funding_rate")
-        return 0.0
+    import httpx as _httpx
 
     exchange_lower = exchange.lower()
+    _ANNUALIZE_8H = 3 * 365
 
-    def _call() -> float:
-        if exchange_lower == "binance" and get_binance_predicted_funding_rate is not None:
-            result = get_binance_predicted_funding_rate(base_ccy, "USDT", annualized=True)
-            return float(result) if result is not None else 0.0
-        if exchange_lower == "okx" and get_okx_funding_rate is not None:
-            result = get_okx_funding_rate(base_ccy, "USDT", annualized=True, details=False)
-            return float(result) if result is not None else 0.0
-        return 0.0
+    if _HAS_APIS:
+        def _call() -> float:
+            if exchange_lower == "binance" and get_binance_predicted_funding_rate is not None:
+                result = get_binance_predicted_funding_rate(base_ccy, "USDT", annualized=True)
+                return float(result) if result is not None else 0.0
+            if exchange_lower == "okx" and get_okx_funding_rate is not None:
+                result = get_okx_funding_rate(base_ccy, "USDT", annualized=True, details=False)
+                return float(result) if result is not None else 0.0
+            return 0.0
 
+        try:
+            result = await asyncio.to_thread(_call)
+            if result != 0.0:
+                return result
+        except Exception:
+            log.exception("current_funding_rate_error", base_ccy=base_ccy, exchange=exchange)
+
+    # Direct REST fallback (works without reference codebase)
     try:
-        return await asyncio.to_thread(_call)
+        async with _httpx.AsyncClient(timeout=6.0) as c:
+            if exchange_lower == "binance":
+                r = await c.get(
+                    "https://fapi.binance.com/fapi/v1/premiumIndex",
+                    params={"symbol": f"{base_ccy.upper()}USDT"},
+                )
+                r.raise_for_status()
+                raw = r.json().get("lastFundingRate")
+                return float(raw) * _ANNUALIZE_8H if raw is not None else 0.0
+            if exchange_lower == "okx":
+                r = await c.get(
+                    "https://www.okx.com/api/v5/public/funding-rate",
+                    params={"instId": f"{base_ccy.upper()}-USDT-SWAP"},
+                )
+                r.raise_for_status()
+                data = r.json().get("data", [{}])
+                raw = data[0].get("fundingRate") if data else None
+                return float(raw) * _ANNUALIZE_8H if raw is not None else 0.0
     except Exception:
-        log.exception("current_funding_rate_error", base_ccy=base_ccy, exchange=exchange)
-        return 0.0
+        log.exception("current_funding_rate_rest_error", base_ccy=base_ccy, exchange=exchange)
+
+    return 0.0
 
 
 async def get_xccy_funding_spread(
@@ -238,23 +265,53 @@ async def get_market_metrics(
     Return OI and volume metrics for a perpetual futures market.
 
     Keys (where available): perpetual_open_interest_USD, perpetual_volume_24h_USD,
-    spot_volume_24h_USD, success.  Returns {} on failure.
+    spot_volume_24h_USD, success.  Returns {} on failure. Falls back to direct
+    REST when reference codebase is unavailable.
     """
-    if not _HAS_APIS:
-        log.warning("internal_apis_unavailable", method="get_market_metrics")
-        return {}
+    import httpx as _httpx
 
     exchange_lower = exchange.lower()
 
-    def _call() -> dict[str, Any]:
-        if exchange_lower == "binance" and get_binance_market_metrics is not None:
-            return get_binance_market_metrics(base_ccy, "USDT") or {}
-        if exchange_lower == "okx" and get_okx_market_metrics is not None:
-            return get_okx_market_metrics(base_ccy, "USDT") or {}
-        return {}
+    if _HAS_APIS:
+        def _call() -> dict[str, Any]:
+            if exchange_lower == "binance" and get_binance_market_metrics is not None:
+                return get_binance_market_metrics(base_ccy, "USDT") or {}
+            if exchange_lower == "okx" and get_okx_market_metrics is not None:
+                return get_okx_market_metrics(base_ccy, "USDT") or {}
+            return {}
 
+        try:
+            result = await asyncio.to_thread(_call)
+            if result:
+                return result
+        except Exception:
+            log.exception("market_metrics_error", base_ccy=base_ccy, exchange=exchange)
+
+    # Direct REST fallback
     try:
-        return await asyncio.to_thread(_call)
+        async with _httpx.AsyncClient(timeout=6.0) as c:
+            sym = base_ccy.upper()
+            if exchange_lower == "binance":
+                r = await c.get(
+                    "https://fapi.binance.com/fapi/v1/openInterest",
+                    params={"symbol": f"{sym}USDT"},
+                )
+                r.raise_for_status()
+                oi = r.json().get("openInterest")
+                return {"perpetual_open_interest": float(oi)} if oi else {}
+            if exchange_lower == "okx":
+                r = await c.get(
+                    "https://www.okx.com/api/v5/public/open-interest",
+                    params={"instId": f"{sym}-USDT-SWAP"},
+                )
+                r.raise_for_status()
+                items = r.json().get("data", [])
+                if items:
+                    return {
+                        "perpetual_open_interest": float(items[0].get("oiCcy", 0)),
+                        "perpetual_open_interest_USD": float(items[0].get("oiUsd", 0)),
+                    }
     except Exception:
-        log.exception("market_metrics_error", base_ccy=base_ccy, exchange=exchange)
-        return {}
+        log.exception("market_metrics_rest_error", base_ccy=base_ccy, exchange=exchange)
+
+    return {}

@@ -94,17 +94,41 @@ function buildTermStructureOption(
     ]);
   }
 
-  const series = Object.entries(seriesByVenue).map(([venue, data]) => ({
-    name: VENUE_LABELS[venue as Venue] ?? venue,
-    type: "scatter",
-    symbolSize: 12,
-    itemStyle: { color: VENUE_COLORS[venue as Venue] ?? "#888" },
-    data: data.map(([dte, y, contract, expiry]) => ({
+  const COLORS: Record<string, string> = VENUE_COLORS as Record<string, string>;
+
+  const series = Object.entries(seriesByVenue).flatMap(([venue, data]) => {
+    const sorted = [...data].sort((a, b) => a[0] - b[0]);
+    const color = COLORS[venue] ?? "#888";
+    const label = VENUE_LABELS[venue as Venue] ?? venue;
+    const pointData = sorted.map(([dte, y, contract, expiry]) => ({
       value: [dte, y],
       contract,
       expiry,
-    })),
-  }));
+    }));
+    return [
+      // Line connecting the dots per venue
+      {
+        name: label,
+        type: "line",
+        smooth: false,
+        showSymbol: false,
+        lineStyle: { color, width: 1.5, type: "dashed" as const },
+        itemStyle: { color },
+        data: pointData,
+        tooltip: { show: false },
+      },
+      // Labelled scatter dots on top (hidden from legend to avoid duplicates)
+      {
+        name: label,
+        type: "scatter",
+        legendHoverLink: true,
+        symbolSize: 10,
+        itemStyle: { color },
+        data: pointData,
+        showInLegend: false,
+      },
+    ];
+  });
 
   return {
     backgroundColor: "transparent",

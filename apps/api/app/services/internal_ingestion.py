@@ -33,9 +33,8 @@ async def ingest_all(db: AsyncSession) -> dict[str, int]:
 
     Returns a dict of {venue: rows_inserted}.
     """
-    if not _HAS_APIS:
-        log.warning("internal_ingestion_skipped", reason="internal APIs unavailable")
-        return {}
+    # Continue even when reference codebase is unavailable — REST fallbacks
+    # in exchange_client will still provide live rates from Binance/OKX.
 
     now = datetime.now(UTC)
     counts: dict[str, int] = {}

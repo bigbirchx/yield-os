@@ -169,7 +169,134 @@ def _safe_float(val: object) -> float | None:
 
 
 # ---------------------------------------------------------------------------
-# MongoDB-backed history (Binance + OKX)
+# Direct REST history fallbacks (work without reference codebase in Docker)
+# ---------------------------------------------------------------------------
+
+async def _binance_rest_history(symbol: str, days: int) -> pd.DataFrame:
+    """Binance FAPI funding rate history — public REST, no key needed."""
+    limit = min(1000, days * 3 + 10)
+    try:
+        async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as c:
+            r = await c.get(
+                "https://fapi.binance.com/fapi/v1/fundingRate",
+                params={"symbol": f"{symbol}USDT", "limit": limit},
+            )
+            r.raise_for_status()
+            data = r.json()
+            if not data:
+                return pd.DataFrame()
+            df = pd.DataFrame(data)
+            df.index = pd.to_datetime(df["fundingTime"].astype(int), unit="ms", utc=True)
+            df.index.name = "snapshot_at"
+            df["annualized_funding_rate"] = df["fundingRate"].astype(float) * _ANNUALIZE_8H
+            cutoff = pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=days)
+            return df[df.index >= cutoff][["annualized_funding_rate"]].sort_index().dropna()
+    except Exception:
+        log.exception("binance_rest_history_error", symbol=symbol)
+        return pd.DataFrame()
+
+
+async def _okx_rest_history(symbol: str, days: int) -> pd.DataFrame:
+    """OKX public funding rate history REST."""
+    try:
+        async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as c:
+            r = await c.get(
+                "https://www.okx.com/api/v5/public/funding-rate-history",
+                params={"instId": f"{symbol}-USDT-SWAP", "limit": 100},
+            )
+            r.raise_for_status()
+            data = r.json().get("data", [])
+            if not data:
+                return pd.DataFrame()
+            records = []
+            for item in data:
+                ts = pd.to_datetime(int(item["fundingTime"]), unit="ms", utc=True)
+                rate_key = "realizedRate" if "realizedRate" in item else "fundingRate"
+                rate = _safe_float(item.get(rate_key))
+                if rate is not None:
+                    records.append({
+                        "snapshot_at": ts,
+                        "annualized_funding_rate": rate * _ANNUALIZE_8H,
+                    })
+            if not records:
+                return pd.DataFrame()
+            df = pd.DataFrame(records).set_index("snapshot_at").sort_index()
+            return df.dropna()
+    except Exception:
+        log.exception("okx_rest_history_error", symbol=symbol)
+        return pd.DataFrame()
+
+
+async def _bybit_rest_history(symbol: str, days: int) -> pd.DataFrame:
+    """Bybit linear perpetual funding rate history — public REST."""
+    try:
+        async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as c:
+            r = await c.get(
+                "https://api.bybit.com/v5/market/funding/history",
+                params={"category": "linear", "symbol": f"{symbol}USDT", "limit": 200},
+            )
+            r.raise_for_status()
+            data = r.json().get("result", {}).get("list", [])
+            if not data:
+                return pd.DataFrame()
+            records = []
+            for item in data:
+                ts = pd.to_datetime(int(item["fundingRateTimestamp"]), unit="ms", utc=True)
+                rate = _safe_float(item.get("fundingRate"))
+                if rate is not None:
+                    records.append({
+                        "snapshot_at": ts,
+                        "annualized_funding_rate": rate * _ANNUALIZE_8H,
+                    })
+            if not records:
+                return pd.DataFrame()
+            df = pd.DataFrame(records).set_index("snapshot_at").sort_index()
+            cutoff = pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=days)
+            return df[df.index >= cutoff].dropna()
+    except Exception:
+        log.exception("bybit_rest_history_error", symbol=symbol)
+        return pd.DataFrame()
+
+
+async def _deribit_rest_history(symbol: str, days: int) -> pd.DataFrame:
+    """Deribit perpetual funding rate history — public REST (uses get_funding_rate_history)."""
+    now_ms = int(pd.Timestamp.now(tz="UTC").timestamp() * 1000)
+    start_ms = int((pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=days)).timestamp() * 1000)
+    try:
+        async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as c:
+            r = await c.get(
+                "https://www.deribit.com/api/v2/public/get_funding_rate_history",
+                params={
+                    "instrument_name": f"{symbol}-PERPETUAL",
+                    "start_timestamp": start_ms,
+                    "end_timestamp": now_ms,
+                },
+            )
+            r.raise_for_status()
+            data = r.json().get("result", [])
+            if not data:
+                return pd.DataFrame()
+            records = []
+            for item in data:
+                ts = pd.to_datetime(item["timestamp"], unit="ms", utc=True)
+                # Deribit uses interest_8h (per-8h rate)
+                rate = _safe_float(item.get("interest_8h") or item.get("interest"))
+                if rate is not None:
+                    records.append({
+                        "snapshot_at": ts,
+                        "annualized_funding_rate": rate * _ANNUALIZE_8H,
+                    })
+            if not records:
+                return pd.DataFrame()
+            df = pd.DataFrame(records).set_index("snapshot_at").sort_index()
+            return df.dropna()
+    except Exception:
+        log.exception("deribit_rest_history_error", symbol=symbol)
+        return pd.DataFrame()
+
+
+# ---------------------------------------------------------------------------
+# MongoDB-backed history (Binance + OKX) with REST fallback
 # ---------------------------------------------------------------------------
 
 async def _mongo_history(symbol: str, exchange: str, day_count: int = 90) -> pd.DataFrame:
@@ -178,18 +305,23 @@ async def _mongo_history(symbol: str, exchange: str, day_count: int = 90) -> pd.
     if cached is not None:
         return cached
 
-    if not _HAS_APIS or get_annualized_funding_rate_history is None:
-        return pd.DataFrame()
+    df = pd.DataFrame()
+    if _HAS_APIS and get_annualized_funding_rate_history is not None:
+        try:
+            raw = await asyncio.to_thread(
+                get_annualized_funding_rate_history,
+                symbol, "USDT", day_count, exchange, True,
+            )
+            df = _norm_history_df(raw, exchange_col=exchange)
+        except Exception:
+            log.exception("mongo_history_error", symbol=symbol, exchange=exchange)
 
-    try:
-        raw = await asyncio.to_thread(
-            get_annualized_funding_rate_history,
-            symbol, "USDT", day_count, exchange, True,
-        )
-        df = _norm_history_df(raw, exchange_col=exchange)
-    except Exception:
-        log.exception("mongo_history_error", symbol=symbol, exchange=exchange)
-        df = pd.DataFrame()
+    # REST fallback when MongoDB is unavailable or returns empty
+    if df.empty:
+        if exchange == "binance":
+            df = await _binance_rest_history(symbol, day_count)
+        elif exchange == "okx":
+            df = await _okx_rest_history(symbol, day_count)
 
     _cache_set(key, df)
     return df
@@ -203,20 +335,40 @@ async def _fetch_binance(symbol: str) -> ExchangeData:
     d = ExchangeData()
 
     async def _live() -> float | None:
-        if not _HAS_APIS or get_binance_predicted_funding_rate is None:
-            return None
+        if _HAS_APIS and get_binance_predicted_funding_rate is not None:
+            try:
+                return await asyncio.to_thread(
+                    get_binance_predicted_funding_rate, symbol, "USDT", True
+                )
+            except Exception:
+                pass
         try:
-            return await asyncio.to_thread(
-                get_binance_predicted_funding_rate, symbol, "USDT", True
-            )
+            async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as c:
+                r = await c.get(
+                    "https://fapi.binance.com/fapi/v1/premiumIndex",
+                    params={"symbol": f"{symbol}USDT"},
+                )
+                r.raise_for_status()
+                raw = _safe_float(r.json().get("lastFundingRate"))
+                return raw * _ANNUALIZE_8H if raw is not None else None
         except Exception:
             return None
 
     async def _metrics() -> dict:
-        if not _HAS_APIS or get_binance_market_metrics is None:
-            return {}
+        if _HAS_APIS and get_binance_market_metrics is not None:
+            try:
+                return await asyncio.to_thread(get_binance_market_metrics, symbol, "USDT") or {}
+            except Exception:
+                pass
         try:
-            return await asyncio.to_thread(get_binance_market_metrics, symbol, "USDT") or {}
+            async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as c:
+                r = await c.get(
+                    "https://fapi.binance.com/fapi/v1/openInterest",
+                    params={"symbol": f"{symbol}USDT"},
+                )
+                r.raise_for_status()
+                oi_coin = _safe_float(r.json().get("openInterest"))
+                return {"perpetual_open_interest": oi_coin}
         except Exception:
             return {}
 
@@ -238,12 +390,25 @@ async def _fetch_okx(symbol: str) -> ExchangeData:
     d = ExchangeData()
 
     async def _live() -> float | None:
-        if not _HAS_APIS or get_okx_funding_rate is None:
-            return None
+        if _HAS_APIS and get_okx_funding_rate is not None:
+            try:
+                return await asyncio.to_thread(get_okx_funding_rate, symbol, "USDT", True, False)
+            except Exception:
+                pass
         try:
-            return await asyncio.to_thread(get_okx_funding_rate, symbol, "USDT", True, False)
+            async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as c:
+                r = await c.get(
+                    "https://www.okx.com/api/v5/public/funding-rate",
+                    params={"instId": f"{symbol}-USDT-SWAP"},
+                )
+                r.raise_for_status()
+                data = r.json().get("data", [{}])
+                if data:
+                    raw = _safe_float(data[0].get("fundingRate"))
+                    return raw * _ANNUALIZE_8H if raw is not None else None
         except Exception:
             return None
+        return None
 
     async def _oi() -> dict:
         try:
@@ -302,18 +467,20 @@ async def _fetch_bybit(symbol: str) -> ExchangeData:
         return {}
 
     async def _history() -> pd.DataFrame:
-        if not _HAS_APIS or PerpFuture is None:
-            return pd.DataFrame()
-        try:
-            def _call():
-                p = PerpFuture(base_ccy=symbol, quote_ccy="USDT")
-                return p._get_bybit_funding_rate_history()
-            raw = await asyncio.to_thread(_call)
-            df = _norm_history_df(raw)
-            _cache_set(cache_key, df)
-            return df
-        except Exception:
-            return pd.DataFrame()
+        df = pd.DataFrame()
+        if _HAS_APIS and PerpFuture is not None:
+            try:
+                def _call():
+                    p = PerpFuture(base_ccy=symbol, quote_ccy="USDT")
+                    return p._get_bybit_funding_rate_history()
+                raw = await asyncio.to_thread(_call)
+                df = _norm_history_df(raw)
+            except Exception:
+                pass
+        if df.empty:
+            df = await _bybit_rest_history(symbol, 90)
+        _cache_set(cache_key, df)
+        return df
 
     hist = _cache_get(cache_key)
     if hist is not None:
@@ -350,27 +517,39 @@ async def _fetch_deribit(symbol: str) -> ExchangeData:
             return None
 
     async def _history() -> pd.DataFrame:
-        if not _HAS_APIS or PerpFuture is None:
-            return pd.DataFrame()
-        try:
-            def _call():
-                p = PerpFuture(base_ccy=symbol, quote_ccy="USD")
-                return p._get_deribit_funding_rate_history()
-            raw = await asyncio.to_thread(_call)
-            df = _norm_history_df(raw)
-            _cache_set(cache_key, df)
-            return df
-        except Exception:
-            return pd.DataFrame()
+        df = pd.DataFrame()
+        if _HAS_APIS and PerpFuture is not None:
+            try:
+                def _call():
+                    p = PerpFuture(base_ccy=symbol, quote_ccy="USD")
+                    return p._get_deribit_funding_rate_history()
+                raw = await asyncio.to_thread(_call)
+                df = _norm_history_df(raw)
+            except Exception:
+                pass
+        if df.empty:
+            df = await _deribit_rest_history(symbol, 90)
+        _cache_set(cache_key, df)
+        return df
 
     async def _oi() -> float | None:
-        if not _HAS_APIS or PerpFuture is None:
-            return None
+        if _HAS_APIS and PerpFuture is not None:
+            try:
+                def _call():
+                    p = PerpFuture(base_ccy=symbol, quote_ccy="USD")
+                    return p._get_deribit_open_interest()
+                return await asyncio.to_thread(_call)
+            except Exception:
+                pass
+        # REST fallback: get OI from ticker
         try:
-            def _call():
-                p = PerpFuture(base_ccy=symbol, quote_ccy="USD")
-                return p._get_deribit_open_interest()
-            return await asyncio.to_thread(_call)
+            async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as c:
+                r = await c.get(
+                    "https://www.deribit.com/api/v2/public/ticker",
+                    params={"instrument_name": f"{symbol}-PERPETUAL"},
+                )
+                r.raise_for_status()
+                return _safe_float(r.json().get("result", {}).get("open_interest"))
         except Exception:
             return None
 
@@ -516,20 +695,26 @@ async def get_funding_history(symbol: str, exchange: str, days: int = 365) -> pd
         return cached
 
     df = pd.DataFrame()
-    if exch == "bybit" and _HAS_APIS and PerpFuture is not None:
-        try:
-            def _call():
-                return PerpFuture(base_ccy=sym, quote_ccy="USDT")._get_bybit_funding_rate_history()
-            df = _norm_history_df(await asyncio.to_thread(_call))
-        except Exception:
-            pass
-    elif exch == "deribit" and _HAS_APIS and PerpFuture is not None:
-        try:
-            def _call():
-                return PerpFuture(base_ccy=sym, quote_ccy="USD")._get_deribit_funding_rate_history()
-            df = _norm_history_df(await asyncio.to_thread(_call))
-        except Exception:
-            pass
+    if exch == "bybit":
+        if _HAS_APIS and PerpFuture is not None:
+            try:
+                def _call():
+                    return PerpFuture(base_ccy=sym, quote_ccy="USDT")._get_bybit_funding_rate_history()
+                df = _norm_history_df(await asyncio.to_thread(_call))
+            except Exception:
+                pass
+        if df.empty:
+            df = await _bybit_rest_history(sym, days)
+    elif exch == "deribit":
+        if _HAS_APIS and PerpFuture is not None:
+            try:
+                def _call():
+                    return PerpFuture(base_ccy=sym, quote_ccy="USD")._get_deribit_funding_rate_history()
+                df = _norm_history_df(await asyncio.to_thread(_call))
+            except Exception:
+                pass
+        if df.empty:
+            df = await _deribit_rest_history(sym, days)
 
     if not df.empty and days < 3650:
         cutoff = pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=days)

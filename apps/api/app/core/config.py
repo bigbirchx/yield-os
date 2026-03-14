@@ -48,6 +48,10 @@ class Settings(BaseSettings):
     coinglass_api_key: str = ""
     coinglass_api_url: str = "https://open-api.coinglass.com/public/v2"
 
+    # Amberdata derivatives key — required for CME futures basis data only
+    # Leave empty to skip CME venue (Deribit/Binance/OKX/Bybit work without it)
+    amberdata_derivs_key: str = ""
+
     @property
     def database_url(self) -> str:
         return (

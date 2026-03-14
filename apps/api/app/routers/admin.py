@@ -276,6 +276,15 @@ async def trigger_ingest(db: AsyncSession = Depends(get_db)) -> IngestResult:
     except Exception as exc:
         log.warning("admin_ingest_coingecko_error", error=str(exc))
 
+    # Internal exchange connectors — populate derivatives_snapshots from Binance/OKX REST
+    internal_counts: dict = {}
+    try:
+        from app.services.internal_ingestion import ingest_all as internal_ingest_all
+        internal_counts = await internal_ingest_all(db)
+    except Exception as exc:
+        log.warning("admin_ingest_internal_error", error=str(exc))
+        internal_counts = {"error": str(exc)}
+
     log.info("admin_ingest_complete", defillama=defillama_counts, aave=aave_counts)
     return IngestResult(
         triggered_at=now,
