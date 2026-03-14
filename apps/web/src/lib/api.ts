@@ -5,6 +5,7 @@ import type {
   DerivativesSnapshot,
   LendingOverview,
   ProtocolRiskParams,
+  RouteOptimizerResult,
   StakingSnapshot,
 } from "@/types/api";
 
@@ -98,6 +99,20 @@ export async function fetchAssetHistory(
 ): Promise<AssetHistory | null> {
   return apiFetch<AssetHistory>(
     `/api/assets/${symbol}/history?days=${days}`
+  );
+}
+
+export async function fetchRouteOptimizer(
+  symbol: string,
+  requestSizeUsd = 10_000_000
+): Promise<RouteOptimizerResult | null> {
+  return apiFetch<RouteOptimizerResult>(
+    `/api/assets/${symbol}/route-optimizer`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ request_size_usd: requestSizeUsd }),
+    }
   );
 }
 

@@ -152,6 +152,60 @@ export interface BorrowDemandAnalysis {
 }
 
 // -----------------------------------------------------------------------
+// Route optimizer
+// -----------------------------------------------------------------------
+
+export interface CostComponent {
+  name: string;
+  value_bps: number;
+  source: string;
+  is_assumption: boolean;
+}
+
+export interface RouteBottleneck {
+  constraint: string;
+  limiting_factor: string;
+  severity: "hard" | "soft";
+  value: number | null;
+  value_unit: string;
+}
+
+export interface OptimizedRoute {
+  route_type: string;
+  display_name: string;
+  description: string;
+  rank: number;
+  total_cost_bps: number;
+  effective_cost_bps: number;
+  max_executable_usd: number;
+  feasible: boolean;
+  cost_components: CostComponent[];
+  bottlenecks: RouteBottleneck[];
+  assumptions_used: string[];
+  ranking_rationale: string;
+}
+
+export interface RouteOptimizerAssumptions {
+  max_pool_share: number;
+  max_oi_share: number;
+  spot_slippage_bps: number;
+  funding_variance_premium_bps: number;
+  wrapper_extra_slippage_bps: number;
+  unbonding_bps_per_day: number;
+  size_shortfall_penalty_bps: number;
+}
+
+export interface RouteOptimizerResult {
+  target_asset: string;
+  request_size_usd: number;
+  recommended_route: string;
+  summary: string;
+  routes: OptimizedRoute[];
+  computed_at: string;
+  assumptions: RouteOptimizerAssumptions;
+}
+
+// -----------------------------------------------------------------------
 // Flattened rows used by overview cards
 // -----------------------------------------------------------------------
 

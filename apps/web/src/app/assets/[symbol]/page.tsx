@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 
 import { BorrowDemandCard } from "@/components/asset/BorrowDemandCard";
+import { RouteOptimizerCard } from "@/components/asset/RouteOptimizerCard";
 import { DerivativesTable } from "@/components/asset/DerivativesTable";
 import { EventsSection } from "@/components/asset/EventsSection";
 import { HistoryChart } from "@/components/asset/HistoryChart";
@@ -17,6 +18,7 @@ import {
   fetchAssetStaking,
   fetchBorrowDemand,
   fetchLtvMatrix,
+  fetchRouteOptimizer,
 } from "@/lib/api";
 import type { LendingHistoryMarket } from "@/types/api";
 
@@ -43,14 +45,16 @@ export default async function AssetPage({ params }: PageProps) {
   const sym = symbol.toUpperCase();
 
   // Parallel fetch — all gracefully return empty on error
-  const [lending, derivatives, staking, history, riskParams, borrowDemand] = await Promise.all([
-    fetchAssetLending(sym),
-    fetchAssetDerivatives(sym),
-    fetchAssetStaking(sym),
-    fetchAssetHistory(sym, 30),
-    fetchLtvMatrix([sym]),
-    fetchBorrowDemand(sym, 30),
-  ]);
+  const [lending, derivatives, staking, history, riskParams, borrowDemand, routeResult] =
+    await Promise.all([
+      fetchAssetLending(sym),
+      fetchAssetDerivatives(sym),
+      fetchAssetStaking(sym),
+      fetchAssetHistory(sym, 30),
+      fetchLtvMatrix([sym]),
+      fetchBorrowDemand(sym, 30),
+      fetchRouteOptimizer(sym),
+    ]);
 
   // If no data at all and symbol not in our tracked list, treat as 404
   if (
@@ -145,6 +149,14 @@ export default async function AssetPage({ params }: PageProps) {
           metric="borrow_apy"
           title="Borrow APY (%)"
         />
+      </SectionCard>
+
+      {/* ── Route optimizer ────────────────────────────────────── */}
+      <SectionCard
+        title="Route Optimizer"
+        source="DeFiLlama · Velo · internal engine"
+      >
+        <RouteOptimizerCard result={routeResult} />
       </SectionCard>
 
       {/* ── Borrow demand explainer ─────────────────────────────── */}
