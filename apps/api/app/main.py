@@ -5,7 +5,17 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
-from app.routers import admin, borrow_demand, derivatives, health, lending, risk, route_optimizer, staking
+from app.routers import (
+    admin,
+    borrow_demand,
+    derivatives,
+    health,
+    internal_derivatives,
+    lending,
+    risk,
+    route_optimizer,
+    staking,
+)
 
 structlog.configure(
     wrapper_class=structlog.make_filtering_bound_logger(
@@ -33,6 +43,7 @@ app.add_middleware(
 app.include_router(health.router)
 app.include_router(admin.router)
 app.include_router(derivatives.router)
+app.include_router(internal_derivatives.router)
 app.include_router(lending.router)
 app.include_router(risk.router)
 app.include_router(staking.router)
@@ -71,6 +82,17 @@ async def on_startup() -> None:
     )
     log.info("defillama_scheduler_registered")
 
+    # Internal exchange connectors (Binance + OKX via internal libs).
+    # Runs every 5 min alongside Velo; gracefully skips when paths unavailable.
+    _scheduler.add_job(
+        _internal_job,
+        trigger=IntervalTrigger(seconds=300),
+        id="internal_exchange_ingestion",
+        replace_existing=True,
+        misfire_grace_time=60,
+    )
+    log.info("internal_exchange_scheduler_registered")
+
     _scheduler.start()
 
 
@@ -90,6 +112,15 @@ async def _defillama_job() -> None:
     async with AsyncSessionLocal() as db:
         counts = await ingest_all(db)
     log.info("defillama_scheduled_run", counts=counts)
+
+
+async def _internal_job() -> None:
+    from app.core.database import AsyncSessionLocal
+    from app.services.internal_ingestion import ingest_all
+
+    async with AsyncSessionLocal() as db:
+        counts = await ingest_all(db)
+    log.info("internal_exchange_scheduled_run", counts=counts)
 
 
 @app.on_event("shutdown")
