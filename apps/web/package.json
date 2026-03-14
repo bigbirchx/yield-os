@@ -1,0 +1,25 @@
+{
+  "name": "yield-cockpit-web",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "next": "15.2.1",
+    "react": "19.0.0",
+    "react-dom": "19.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "22.13.9",
+    "@types/react": "19.0.7",
+    "@types/react-dom": "19.0.4",
+    "typescript": "5.8.2",
+    "eslint": "9.22.0",
+    "eslint-config-next": "15.2.1"
+  }
+}
