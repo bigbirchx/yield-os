@@ -206,6 +206,20 @@ export interface RouteOptimizerResult {
 }
 
 // -----------------------------------------------------------------------
+// Data source status (source: /api/admin/sources)
+// -----------------------------------------------------------------------
+
+export interface SourceStatus {
+  key: string;
+  label: string;
+  status: "fresh" | "stale" | "missing";
+  last_updated: string | null;
+  row_count: number;
+  stale_threshold_minutes: number;
+  populates: string[];
+}
+
+// -----------------------------------------------------------------------
 // Flattened rows used by overview cards
 // -----------------------------------------------------------------------
 

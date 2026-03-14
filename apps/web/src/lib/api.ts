@@ -6,6 +6,7 @@ import type {
   LendingOverview,
   ProtocolRiskParams,
   RouteOptimizerResult,
+  SourceStatus,
   StakingSnapshot,
 } from "@/types/api";
 
@@ -145,6 +146,24 @@ export async function fetchLtvMatrix(
       body: JSON.stringify(body),
     })) ?? []
   );
+}
+
+/**
+ * Fetch the current freshness status of every configured data source.
+ * Always uses the public API URL so this is safe for client-side calls.
+ */
+export async function fetchSources(): Promise<SourceStatus[]> {
+  const publicUrl =
+    process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+  try {
+    const res = await fetch(`${publicUrl}/api/admin/sources`, {
+      cache: "no-store",
+    });
+    if (!res.ok) return [];
+    return res.json() as Promise<SourceStatus[]>;
+  } catch {
+    return [];
+  }
 }
 
 /**

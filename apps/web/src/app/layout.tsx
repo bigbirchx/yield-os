@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import DataRefresher from "@/components/DataRefresher";
+import SourceStatusPanel from "@/components/SourceStatusPanel";
 
 export const metadata: Metadata = {
   title: "Yield Cockpit",
@@ -35,6 +36,7 @@ export default function RootLayout({
             ))}
           </nav>
           <DataRefresher />
+          <SourceStatusPanel />
           <span className="app-env-tag">INTERNAL · MVP</span>
         </header>
         <main className="app-main">{children}</main>

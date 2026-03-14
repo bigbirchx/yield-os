@@ -8,11 +8,13 @@ Do not expose to the public internet without adding auth.
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from typing import Literal
 
 import structlog
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -48,9 +50,161 @@ class BackfillResult(BaseModel):
     errors: list[str]
 
 
+class SourceStatus(BaseModel):
+    key: str
+    label: str
+    status: Literal["fresh", "stale", "missing"]
+    last_updated: datetime | None
+    row_count: int
+    stale_threshold_minutes: int
+    populates: list[str]
+
+
+# ---------------------------------------------------------------------------
+# Sources metadata — what each connector feeds and how fresh it should be
+# ---------------------------------------------------------------------------
+
+_SOURCES: list[dict] = [
+    {
+        "key": "defillama",
+        "label": "DeFiLlama",
+        "table": "lending_market_snapshots",
+        "where": None,
+        "stale_minutes": 20,
+        "populates": [
+            "Overview → Lending rates (all symbols)",
+            "Asset cockpit → Supply & borrow APYs",
+            "Asset cockpit → Rate history chart",
+            "Borrow-demand explainer",
+            "Route optimizer → available liquidity",
+        ],
+    },
+    {
+        "key": "aave",
+        "label": "Aave v3",
+        "table": "protocol_risk_params_snapshots",
+        "where": "protocol LIKE 'aave-v3%'",
+        "stale_minutes": 60,
+        "populates": [
+            "Asset cockpit → Risk params (LTV, liq. threshold, caps)",
+            "LTV matrix → Aave rows",
+            "Route optimizer → collateral safety check",
+        ],
+    },
+    {
+        "key": "morpho",
+        "label": "Morpho Blue",
+        "table": "protocol_risk_params_snapshots",
+        "where": "protocol = 'morpho-blue'",
+        "stale_minutes": 60,
+        "populates": [
+            "Asset cockpit → Risk params (LLTV, market APYs)",
+            "LTV matrix → Morpho rows",
+        ],
+    },
+    {
+        "key": "kamino",
+        "label": "Kamino",
+        "table": "protocol_risk_params_snapshots",
+        "where": "protocol = 'kamino'",
+        "stale_minutes": 60,
+        "populates": [
+            "Asset cockpit → Solana risk params",
+            "LTV matrix → Kamino rows",
+        ],
+    },
+    {
+        "key": "velo",
+        "label": "Velo",
+        "table": "derivatives_snapshots",
+        "where": "(raw_payload->>'source') IS DISTINCT FROM 'internal'",
+        "stale_minutes": 10,
+        "populates": [
+            "Overview → Derivatives (funding, OI, basis, volume)",
+            "Asset cockpit → Derivatives table",
+            "Asset cockpit → Funding rate history chart",
+        ],
+    },
+    {
+        "key": "internal_binance",
+        "label": "Binance (internal)",
+        "table": "derivatives_snapshots",
+        "where": "venue = 'binance'",
+        "stale_minutes": 10,
+        "populates": [
+            "GET /api/derivatives/funding/history (365-day)",
+            "GET /api/derivatives/funding/current",
+            "GET /api/derivatives/rv → realized vol",
+        ],
+    },
+    {
+        "key": "internal_okx",
+        "label": "OKX (internal)",
+        "table": "derivatives_snapshots",
+        "where": "venue = 'okx'",
+        "stale_minutes": 10,
+        "populates": [
+            "GET /api/derivatives/funding/history (365-day)",
+            "GET /api/derivatives/funding/current",
+        ],
+    },
+]
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
+
+
+@router.get("/sources", response_model=list[SourceStatus])
+async def list_sources(db: AsyncSession = Depends(get_db)) -> list[SourceStatus]:
+    """
+    Return freshness status for every configured data source.
+
+    Status values:
+    - **fresh**   — data updated within the stale threshold
+    - **stale**   — data exists but is older than the threshold
+    - **missing** — no rows found in the database
+    """
+    now = datetime.now(UTC)
+    results: list[SourceStatus] = []
+
+    for src in _SOURCES:
+        table = src["table"]
+        where_clause = f"WHERE {src['where']}" if src["where"] else ""
+
+        row = (
+            await db.execute(
+                text(
+                    f"SELECT count(*) AS n, max(snapshot_at) AS latest "
+                    f"FROM {table} {where_clause}"
+                )
+            )
+        ).one()
+
+        row_count: int = int(row.n or 0)
+        last_updated: datetime | None = row.latest
+
+        if row_count == 0 or last_updated is None:
+            status: Literal["fresh", "stale", "missing"] = "missing"
+        elif now - last_updated > timedelta(minutes=src["stale_minutes"]):
+            status = "stale"
+        else:
+            status = "fresh"
+
+        results.append(
+            SourceStatus(
+                key=src["key"],
+                label=src["label"],
+                status=status,
+                last_updated=last_updated,
+                row_count=row_count,
+                stale_threshold_minutes=src["stale_minutes"],
+                populates=src["populates"],
+            )
+        )
+
+    return results
 
 
 @router.post("/ingest", response_model=IngestResult)

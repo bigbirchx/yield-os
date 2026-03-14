@@ -112,6 +112,224 @@ a:hover {
   letter-spacing: 0.08em;
 }
 
+/* SourceStatusPanel ------------------------------------------------------ */
+
+.src-panel-root {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+/* Trigger button */
+.src-trigger {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.2rem 0.55rem;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+  white-space: nowrap;
+}
+.src-trigger:hover {
+  border-color: var(--border-subtle);
+  background: var(--surface-2);
+  color: var(--text-secondary);
+}
+
+.src-dot-cluster {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.src-trigger-label {
+  letter-spacing: 0.08em;
+}
+
+.src-trigger-caret {
+  font-size: 8px;
+}
+
+@keyframes spin-src {
+  to { transform: rotate(360deg); }
+}
+.src-trigger-spinner {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border: 1.5px solid var(--border);
+  border-top-color: var(--text-muted);
+  border-radius: 50%;
+  animation: spin-src 0.8s linear infinite;
+}
+
+/* Dropdown panel */
+.src-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 200;
+  min-width: 340px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) + 2px);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+
+.src-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.6rem 0.85rem 0.45rem;
+  border-bottom: 1px solid var(--border-subtle);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+}
+
+.src-panel-body {
+  padding: 0.35rem 0;
+}
+
+.src-empty {
+  padding: 0.5rem 0.85rem;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* Individual source row */
+.src-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.35rem 0.85rem;
+  transition: background 0.1s;
+  cursor: default;
+}
+.src-row:hover {
+  background: var(--surface-2);
+}
+
+.src-row-main {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex: 1;
+  min-width: 0;
+}
+
+.src-row-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
+.src-row-status {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: lowercase;
+}
+
+.src-row-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+  white-space: nowrap;
+}
+
+.src-row-count {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.src-row-age {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+/* Populates tooltip — visible on row hover */
+.src-populates-tooltip {
+  display: none;
+  position: absolute;
+  right: calc(100% + 10px);
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 300;
+  width: 230px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.6);
+  padding: 0.5rem 0.65rem;
+  pointer-events: none;
+}
+
+.src-row:hover .src-populates-tooltip {
+  display: block;
+}
+
+.src-populates-heading {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 0.35rem;
+}
+
+.src-populates-tooltip ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.src-populates-tooltip li {
+  font-size: 11px;
+  color: var(--text-secondary);
+  line-height: 1.4;
+  padding-left: 0.7rem;
+  position: relative;
+}
+
+.src-populates-tooltip li::before {
+  content: "→";
+  position: absolute;
+  left: 0;
+  color: var(--text-muted);
+  font-size: 9px;
+}
+
+.src-panel-footer {
+  padding: 0.4rem 0.85rem;
+  border-top: 1px solid var(--border-subtle);
+  font-size: 10px;
+  color: var(--text-muted);
+  font-style: italic;
+  text-align: center;
+}
+
 /* DataRefresher badge ---------------------------------------------------- */
 .data-refresher-badge {
   display: flex;
