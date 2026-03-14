@@ -1,0 +1,6 @@
+- Read docs/PROJECT_BRIEF.md before making structural changes.
+- Preserve normalized schema naming.
+- Prefer simple service/repository patterns.
+- Preserve raw source payloads in JSON columns.
+- Avoid unnecessary abstraction layers.
+- This is an institutional crypto yield cockpit, not a retail app.

@@ -1,0 +1,6 @@
+- Use typed Python and typed TypeScript.
+- Add tests for new connectors and API endpoints.
+- Keep functions small and explicit.
+- Use clear names over clever names.
+- Do not change unrelated files unless required.
+- Explain assumptions when source data is ambiguous.
