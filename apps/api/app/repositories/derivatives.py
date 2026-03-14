@@ -4,6 +4,8 @@ Derivatives repository — read-side queries for derivatives_snapshots.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -58,5 +60,27 @@ async def get_latest_per_symbol(
         & (DerivativesSnapshot.venue == sub.c.venue)
         & (DerivativesSnapshot.snapshot_at == sub.c.max_at),
     )
+    result = await db.execute(stmt)
+    return list(result.scalars().all())
+
+
+async def get_history(
+    db: AsyncSession,
+    symbol: str,
+    days: int = 30,
+    venue: str | None = None,
+) -> list[DerivativesSnapshot]:
+    """Return time-series rows for a symbol over the last N days."""
+    since = datetime.now(UTC) - timedelta(days=days)
+    stmt = (
+        select(DerivativesSnapshot)
+        .where(
+            DerivativesSnapshot.symbol == symbol.upper(),
+            DerivativesSnapshot.snapshot_at >= since,
+        )
+        .order_by(DerivativesSnapshot.snapshot_at.asc())
+    )
+    if venue:
+        stmt = stmt.where(DerivativesSnapshot.venue == venue)
     result = await db.execute(stmt)
     return list(result.scalars().all())

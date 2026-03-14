@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.repositories.derivatives import get_latest_per_symbol, get_latest_per_venue
+from app.repositories.derivatives import get_history, get_latest_per_symbol, get_latest_per_venue
 from app.services.velo_ingestion import TRACKED_COINS
 
 router = APIRouter(prefix="/api/derivatives", tags=["derivatives"])
@@ -67,4 +67,16 @@ async def derivatives_by_symbol(
 ):
     """Returns the latest snapshot per venue for a single symbol."""
     rows = await get_latest_per_venue(db, symbol)
+    return [DerivativesSnapshotOut.model_validate(r) for r in rows]
+
+
+@router.get("/{symbol}/history", response_model=list[DerivativesSnapshotOut])
+async def derivatives_history(
+    symbol: str,
+    days: int = Query(default=30, ge=1, le=365),
+    venue: str | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    """Returns time-series derivatives data for a symbol. Source: Velo."""
+    rows = await get_history(db, symbol, days=days, venue=venue)
     return [DerivativesSnapshotOut.model_validate(r) for r in rows]

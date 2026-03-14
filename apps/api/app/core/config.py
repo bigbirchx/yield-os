@@ -19,6 +19,20 @@ class Settings(BaseSettings):
     velo_api_key: str = ""
     defillama_api_key: str = ""
 
+    # Direct protocol connector settings
+    # Aave: uses The Graph subgraph (free API key from https://thegraph.com)
+    aave_subgraph_key: str = ""
+    aave_subgraph_url: str = (
+        "https://gateway-arbitrum.network.thegraph.com/api/{key}/subgraphs/id/"
+        "JCNWRypm7FYwV8fx5HhzZPSFaMxgkPuw4TnWm89byKeU"
+    )
+
+    # Morpho Blue: public GraphQL API, no key required
+    morpho_api_url: str = "https://blue-api.morpho.org/graphql"
+
+    # Kamino: public REST API, no key required
+    kamino_api_url: str = "https://api.kamino.finance"
+
     @property
     def database_url(self) -> str:
         return (

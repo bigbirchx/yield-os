@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
-from app.routers import derivatives, health, lending
+from app.routers import derivatives, health, lending, risk, staking
 
 structlog.configure(
     wrapper_class=structlog.make_filtering_bound_logger(
@@ -33,6 +33,8 @@ app.add_middleware(
 app.include_router(health.router)
 app.include_router(derivatives.router)
 app.include_router(lending.router)
+app.include_router(risk.router)
+app.include_router(staking.router)
 
 _scheduler: AsyncIOScheduler | None = None
 
