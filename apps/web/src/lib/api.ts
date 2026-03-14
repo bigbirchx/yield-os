@@ -9,7 +9,12 @@ import type {
   StakingSnapshot,
 } from "@/types/api";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+// Server Components run inside the Docker network and must use the internal
+// hostname. Browser (client) fetches use the public host-accessible URL.
+const API_URL =
+  (typeof window === "undefined" ? process.env.API_INTERNAL_URL : null) ??
+  process.env.NEXT_PUBLIC_API_URL ??
+  "http://localhost:8000";
 
 // Shared fetch helper — throws on non-2xx, returns null on network errors
 // so pages can render empty states instead of hard-crashing.
