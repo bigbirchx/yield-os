@@ -220,6 +220,70 @@ export interface SourceStatus {
 }
 
 // -----------------------------------------------------------------------
+// CoinGecko reference layer (source: coingecko)
+// -----------------------------------------------------------------------
+
+export interface MarketSnapshot {
+  symbol: string;
+  coingecko_id: string;
+  current_price_usd: number | null;
+  market_cap_usd: number | null;
+  fully_diluted_valuation_usd: number | null;
+  volume_24h_usd: number | null;
+  circulating_supply: number | null;
+  total_supply: number | null;
+  max_supply: number | null;
+  price_change_24h_pct: number | null;
+  snapshot_at: string;
+  source_name: string;
+}
+
+export interface AssetDetail {
+  symbol: string;
+  canonical_symbol: string;
+  coingecko_id: string | null;
+  name: string | null;
+  asset_type: string | null;
+  chain: string | null;
+  contract_address: string | null;
+  market: MarketSnapshot | null;
+  source_name: string;
+}
+
+export interface MarketHistoryPoint {
+  snapshot_at: string;
+  price_usd: number | null;
+  market_cap_usd: number | null;
+  volume_24h_usd: number | null;
+}
+
+export interface AssetMarketHistory {
+  symbol: string;
+  coingecko_id: string;
+  series: MarketHistoryPoint[];
+}
+
+export interface GlobalMarket {
+  total_market_cap_usd: number | null;
+  total_volume_24h_usd: number | null;
+  btc_dominance_pct: number | null;
+  eth_dominance_pct: number | null;
+  market_cap_change_24h_pct: number | null;
+  active_cryptocurrencies: number | null;
+  source_name: string;
+  fetched_at: string;
+}
+
+export interface ApiUsage {
+  provider: string;
+  rate_limit: number | null;
+  remaining_credits: number | null;
+  monthly_total_credits: number | null;
+  snapshot_at: string | null;
+  source_name: string;
+}
+
+// -----------------------------------------------------------------------
 // Flattened rows used by overview cards
 // -----------------------------------------------------------------------
 

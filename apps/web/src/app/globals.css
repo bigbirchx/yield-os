@@ -1292,6 +1292,151 @@ details[open] .assumptions-summary::before { content: "▼  "; }
   max-width: 600px;
 }
 
+/* ── CoinGecko Market Context Card ───────────────────────────────────────── */
+
+.mkt-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 1rem;
+}
+
+.mkt-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.75rem;
+}
+
+.mkt-card-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.mkt-sparkline {
+  margin: 0 -0.25rem 0.75rem;
+}
+
+.mkt-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.5rem 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.mkt-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.mkt-metric-label {
+  font-size: 10px;
+  color: var(--text-muted);
+  letter-spacing: 0.04em;
+}
+
+.mkt-metric-value {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.mkt-supply-bar-wrap {
+  margin-bottom: 0.5rem;
+}
+
+.mkt-supply-bar-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-bottom: 3px;
+}
+
+.mkt-supply-bar-track {
+  height: 4px;
+  background: var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.mkt-supply-bar-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+
+.mkt-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.mkt-meta-name {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.mkt-meta-badge {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: var(--surface-2);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* ── Global Market Card (overview page) ──────────────────────────────────── */
+
+.global-mkt-card {
+  margin-bottom: 1rem;
+}
+
+.global-mkt-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 0.5rem 1.5rem;
+  padding: 0.75rem 0 0.25rem;
+}
+
+@media (max-width: 900px) {
+  .global-mkt-grid { grid-template-columns: repeat(3, 1fr); }
+}
+
+@media (max-width: 600px) {
+  .global-mkt-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+.global-mkt-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.global-mkt-label {
+  font-size: 10px;
+  color: var(--text-muted);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.global-mkt-value {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
 /* ── Funding Rate Dashboard ───────────────────────────────────────────────── */
 
 .fn-page {

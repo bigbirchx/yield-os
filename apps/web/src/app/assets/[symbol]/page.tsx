@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 
 import { BorrowDemandCard } from "@/components/asset/BorrowDemandCard";
+import { MarketContextCard } from "@/components/asset/MarketContextCard";
 import { RouteOptimizerCard } from "@/components/asset/RouteOptimizerCard";
 import { DerivativesTable } from "@/components/asset/DerivativesTable";
 import { EventsSection } from "@/components/asset/EventsSection";
@@ -18,6 +19,8 @@ import {
   fetchAssetStaking,
   fetchBorrowDemand,
   fetchLtvMatrix,
+  fetchReferenceAsset,
+  fetchReferenceHistory,
   fetchRouteOptimizer,
 } from "@/lib/api";
 import type { LendingHistoryMarket } from "@/types/api";
@@ -45,7 +48,7 @@ export default async function AssetPage({ params }: PageProps) {
   const sym = symbol.toUpperCase();
 
   // Parallel fetch — all gracefully return empty on error
-  const [lending, derivatives, staking, history, riskParams, borrowDemand, routeResult] =
+  const [lending, derivatives, staking, history, riskParams, borrowDemand, routeResult, cgAsset, cgHistory] =
     await Promise.all([
       fetchAssetLending(sym),
       fetchAssetDerivatives(sym),
@@ -54,6 +57,8 @@ export default async function AssetPage({ params }: PageProps) {
       fetchLtvMatrix([sym]),
       fetchBorrowDemand(sym, 30),
       fetchRouteOptimizer(sym),
+      fetchReferenceAsset(sym),
+      fetchReferenceHistory(sym, 90),
     ]);
 
   // If no data at all and symbol not in our tracked list, treat as 404
@@ -94,6 +99,11 @@ export default async function AssetPage({ params }: PageProps) {
           )}
         </div>
       </header>
+
+      {/* ── CoinGecko market context ───────────────────────────── */}
+      {(cgAsset?.market || cgHistory?.series?.length) ? (
+        <MarketContextCard asset={cgAsset} history={cgHistory} />
+      ) : null}
 
       {/* ── Lending markets ────────────────────────────────────── */}
       <SectionCard

@@ -1,6 +1,7 @@
+import { GlobalMarketCard } from "@/components/overview/GlobalMarketCard";
 import { MetricSection } from "@/components/overview/MetricSection";
 import type { MetricRowData } from "@/components/overview/MetricRow";
-import { fetchDerivativesOverview, fetchLendingOverview } from "@/lib/api";
+import { fetchDerivativesOverview, fetchGlobalMarket, fetchLendingOverview } from "@/lib/api";
 import type {
   DerivativesOverview,
   FlatDerivativesRow,
@@ -150,9 +151,10 @@ function capacityConstraints(lending: FlatLendingRow[], n = 8): MetricRowData[] 
 // -----------------------------------------------------------------------
 
 export default async function OverviewPage() {
-  const [derivativesData, lendingData] = await Promise.all([
+  const [derivativesData, lendingData, globalMarket] = await Promise.all([
     fetchDerivativesOverview(["BTC", "ETH", "SOL"]),
     fetchLendingOverview(["USDC", "USDT", "ETH", "WBTC", "SOL", "DAI"]),
+    fetchGlobalMarket(),
   ]);
 
   const lending = flattenLending(lendingData);
@@ -207,6 +209,7 @@ export default async function OverviewPage() {
           &nbsp;·&nbsp; auto-refresh every 60s
         </span>
       </div>
+      <GlobalMarketCard data={globalMarket} />
       <div className="overview-grid">
         {sections.map((section) => (
           <MetricSection key={section.title} {...section} />

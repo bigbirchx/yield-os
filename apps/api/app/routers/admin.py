@@ -148,6 +148,30 @@ _SOURCES: list[dict] = [
             "GET /api/derivatives/funding/current",
         ],
     },
+    {
+        "key": "coingecko_market",
+        "label": "CoinGecko (market)",
+        "table": "market_reference_snapshots",
+        "where": None,
+        "stale_minutes": 20,
+        "populates": [
+            "Asset cockpit → Spot price + market cap context",
+            "Asset cockpit → 24h volume",
+            "Overview → Global market context card",
+            "GET /api/reference/assets",
+        ],
+    },
+    {
+        "key": "coingecko_history",
+        "label": "CoinGecko (history)",
+        "table": "market_reference_history",
+        "where": None,
+        "stale_minutes": 1500,  # daily backfill; stale after 25h
+        "populates": [
+            "Asset cockpit → CoinGecko price history chart",
+            "GET /api/reference/history/{symbol}",
+        ],
+    },
 ]
 
 
@@ -244,6 +268,13 @@ async def trigger_ingest(db: AsyncSession = Depends(get_db)) -> IngestResult:
     except Exception as exc:
         log.error("admin_ingest_kamino_error", error=str(exc))
         kamino_counts["error"] = str(exc)
+
+    # CoinGecko market snapshots — best-effort, works with free tier
+    from app.services.coingecko_ingestion import ingest_market_snapshots as cg_ingest
+    try:
+        await cg_ingest(db)
+    except Exception as exc:
+        log.warning("admin_ingest_coingecko_error", error=str(exc))
 
     log.info("admin_ingest_complete", defillama=defillama_counts, aave=aave_counts)
     return IngestResult(

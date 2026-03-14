@@ -14,6 +14,7 @@ from app.routers import (
     health,
     internal_derivatives,
     lending,
+    reference,
     risk,
     route_optimizer,
     staking,
@@ -48,6 +49,7 @@ app.include_router(derivatives.router)
 app.include_router(internal_derivatives.router)
 app.include_router(funding_snapshot.router)
 app.include_router(funding_history.router)
+app.include_router(reference.router)
 app.include_router(lending.router)
 app.include_router(risk.router)
 app.include_router(staking.router)
@@ -97,6 +99,26 @@ async def on_startup() -> None:
     )
     log.info("internal_exchange_scheduler_registered")
 
+    # CoinGecko market reference snapshots — 15 min (works with free tier too).
+    _scheduler.add_job(
+        _coingecko_snapshot_job,
+        trigger=IntervalTrigger(seconds=900),
+        id="coingecko_market_snapshot",
+        replace_existing=True,
+        misfire_grace_time=120,
+    )
+    log.info("coingecko_snapshot_scheduler_registered")
+
+    # CoinGecko API usage — 30 min (Pro only; no-op if no key).
+    _scheduler.add_job(
+        _coingecko_usage_job,
+        trigger=IntervalTrigger(seconds=1800),
+        id="coingecko_api_usage",
+        replace_existing=True,
+        misfire_grace_time=120,
+    )
+    log.info("coingecko_usage_scheduler_registered")
+
     _scheduler.start()
 
 
@@ -125,6 +147,24 @@ async def _internal_job() -> None:
     async with AsyncSessionLocal() as db:
         counts = await ingest_all(db)
     log.info("internal_exchange_scheduled_run", counts=counts)
+
+
+async def _coingecko_snapshot_job() -> None:
+    from app.core.database import AsyncSessionLocal
+    from app.services.coingecko_ingestion import ingest_market_snapshots
+
+    async with AsyncSessionLocal() as db:
+        count = await ingest_market_snapshots(db)
+    log.info("coingecko_snapshot_run", inserted=count)
+
+
+async def _coingecko_usage_job() -> None:
+    from app.core.database import AsyncSessionLocal
+    from app.services.coingecko_ingestion import ingest_api_usage
+
+    async with AsyncSessionLocal() as db:
+        stored = await ingest_api_usage(db)
+    log.info("coingecko_usage_run", stored=stored)
 
 
 @app.on_event("shutdown")

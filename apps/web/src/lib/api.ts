@@ -1,9 +1,14 @@
 import type {
+  ApiUsage,
+  AssetDetail,
   AssetHistory,
+  AssetMarketHistory,
   BorrowDemandAnalysis,
   DerivativesOverview,
   DerivativesSnapshot,
+  GlobalMarket,
   LendingOverview,
+  MarketSnapshot,
   ProtocolRiskParams,
   RouteOptimizerResult,
   SourceStatus,
@@ -146,6 +151,44 @@ export async function fetchLtvMatrix(
       body: JSON.stringify(body),
     })) ?? []
   );
+}
+
+// -----------------------------------------------------------------------
+// CoinGecko reference layer
+// -----------------------------------------------------------------------
+
+export async function fetchReferenceAssets(
+  symbols?: string[]
+): Promise<MarketSnapshot[]> {
+  const qs = symbols?.map((s) => `symbols=${s}`).join("&") ?? "";
+  return (
+    (await apiFetch<MarketSnapshot[]>(
+      `/api/reference/assets${qs ? `?${qs}` : ""}`
+    )) ?? []
+  );
+}
+
+export async function fetchReferenceAsset(
+  symbol: string
+): Promise<AssetDetail | null> {
+  return apiFetch<AssetDetail>(`/api/reference/assets/${symbol}`);
+}
+
+export async function fetchReferenceHistory(
+  symbol: string,
+  days = 90
+): Promise<AssetMarketHistory | null> {
+  return apiFetch<AssetMarketHistory>(
+    `/api/reference/history/${symbol}?days=${days}`
+  );
+}
+
+export async function fetchGlobalMarket(): Promise<GlobalMarket | null> {
+  return apiFetch<GlobalMarket>("/api/reference/global");
+}
+
+export async function fetchApiUsage(): Promise<ApiUsage | null> {
+  return apiFetch<ApiUsage>("/api/reference/usage");
 }
 
 /**
