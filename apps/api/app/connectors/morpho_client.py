@@ -36,27 +36,28 @@ _RETRIES = 3
 
 _MARKETS_QUERY = """
 {
-  markets(first: 100, orderBy: SupplyAssetsUsd, orderByDirection: Desc) {
-    id
-    uniqueKey
-    lltv
-    loanToken {
-      symbol
-      address
-      decimals
-    }
-    collateralToken {
-      symbol
-      address
-      decimals
-    }
-    state {
-      supplyAssets
-      borrowAssets
-      liquidityAssets
-      supplyAssetsUsd
-      borrowAssetsUsd
-      liquidityAssetsUsd
+  markets(first: 200, orderBy: SupplyAssetsUsd, orderDirection: Desc) {
+    items {
+      uniqueKey
+      lltv
+      loanAsset {
+        symbol
+        address
+        decimals
+      }
+      collateralAsset {
+        symbol
+        address
+        decimals
+      }
+      state {
+        supplyAssets
+        borrowAssets
+        liquidityAssets
+        supplyAssetsUsd
+        borrowAssetsUsd
+        liquidityAssetsUsd
+      }
     }
   }
 }
@@ -72,9 +73,9 @@ class MorphoToken(BaseModel):
 
 
 class MorphoMarketState(BaseModel):
-    supply_assets: str | None = Field(None, alias="supplyAssets")
-    borrow_assets: str | None = Field(None, alias="borrowAssets")
-    liquidity_assets: str | None = Field(None, alias="liquidityAssets")
+    supply_assets: int | None = Field(None, alias="supplyAssets")
+    borrow_assets: int | None = Field(None, alias="borrowAssets")
+    liquidity_assets: int | None = Field(None, alias="liquidityAssets")
     supply_assets_usd: float | None = Field(None, alias="supplyAssetsUsd")
     borrow_assets_usd: float | None = Field(None, alias="borrowAssetsUsd")
     liquidity_assets_usd: float | None = Field(None, alias="liquidityAssetsUsd")
@@ -85,11 +86,10 @@ class MorphoMarketState(BaseModel):
 class MorphoMarket(BaseModel):
     """One market from the Morpho Blue API."""
 
-    id: str
     unique_key: str = Field(alias="uniqueKey")
     lltv: str  # 1e18-scaled decimal string
-    loan_token: MorphoToken = Field(alias="loanToken")
-    collateral_token: MorphoToken = Field(alias="collateralToken")
+    loan_token: MorphoToken = Field(alias="loanAsset")
+    collateral_token: MorphoToken = Field(alias="collateralAsset")
     state: MorphoMarketState | None = None
 
     model_config = {"extra": "allow", "populate_by_name": True}
@@ -145,6 +145,8 @@ class MorphoClient:
     async def fetch_markets(self) -> list[MorphoMarket]:
         log.info("morpho_fetch_markets_start")
         data = await self._graphql(_MARKETS_QUERY)
-        markets = [MorphoMarket.model_validate(m) for m in data.get("markets", [])]
+        # API returns { markets: { items: [...] } } as of 2025
+        items = data.get("markets", {}).get("items", [])
+        markets = [MorphoMarket.model_validate(m) for m in items]
         log.info("morpho_fetch_markets_done", count=len(markets))
         return markets

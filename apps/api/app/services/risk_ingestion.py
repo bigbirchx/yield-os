@@ -72,23 +72,22 @@ def _from_morpho(market: MorphoMarket, now: datetime) -> ProtocolRiskParamsSnaps
 def _from_kamino(
     reserve: KaminoReserve, market_address: str, now: datetime
 ) -> ProtocolRiskParamsSnapshot | None:
-    if not reserve.symbol:
+    if not reserve.liquidity_token:
         return None
-    cfg = reserve.config
     return ProtocolRiskParamsSnapshot(
         protocol="kamino",
         chain="Solana",
-        asset=reserve.symbol.upper(),
+        asset=reserve.symbol,
         market_address=market_address,
-        max_ltv=cfg.loan_to_value_ratio if cfg else None,
-        liquidation_threshold=cfg.liquidation_threshold if cfg else None,
-        liquidation_penalty=cfg.liquidation_bonus if cfg else None,
-        borrow_cap_native=cfg.borrow_limit if cfg else None,
-        supply_cap_native=cfg.deposit_limit if cfg else None,
+        max_ltv=reserve.max_ltv_float,
+        liquidation_threshold=None,   # not in the metrics endpoint
+        liquidation_penalty=None,
+        borrow_cap_native=None,       # totalBorrow in native units is a string
+        supply_cap_native=None,
         collateral_eligible=True,
-        borrowing_enabled=reserve.is_active,
-        is_active=reserve.is_active,
-        available_capacity_native=reserve.available_capacity_native,
+        borrowing_enabled=True,
+        is_active=True,
+        available_capacity_native=reserve.available_capacity_usd,
         raw_payload=reserve.model_dump(by_alias=True),
         snapshot_at=now,
     )

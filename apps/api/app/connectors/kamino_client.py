@@ -2,19 +2,15 @@
 Kamino Finance connector — reads lending market risk parameters.
 
 Endpoints (public REST, no API key required):
-  GET {base}/v2/kamino-market/all              → list of all markets
-  GET {base}/v2/kamino-market/{address}/reserves → reserves for one market
+  GET {base}/v2/kamino-market?env=mainnet-beta       → list of all markets
+  GET {base}/kamino-market/{address}/reserves/metrics → reserve metrics per market
 
 Field mapping (Kamino raw → normalized):
-  reserve.config.loanToValueRatio              → max_ltv   (decimal 0-1)
-  reserve.config.liquidationThreshold          → liquidation_threshold (decimal 0-1)
-  reserve.config.liquidationBonus              → liquidation_penalty   (decimal 0-1)
-  reserve.config.borrowLimit                   → borrow_cap_native
-  reserve.config.depositLimit                  → supply_cap_native
-  reserve.borrowedAmount (liquidity)           → available_capacity_native proxy
-  reserve.liquidity.availableAmount            → available_capacity_native
-  reserve.config.status ("Active")             → is_active, borrowing_enabled
-  reserve.liquidity.mintAddress (symbol via lookup) → asset
+  maxLtv           → max_ltv   (decimal string, e.g. "0.8")
+  liquidityToken   → asset (symbol)
+  totalSupplyUsd   → supply cap proxy (USD)
+  totalBorrowUsd   → borrow cap proxy (USD)
+  totalSupply - totalBorrow → available_capacity (native units)
 
 Note: Kamino uses decimal fractions (0.80) natively — no conversion needed.
 """
@@ -34,47 +30,46 @@ _TIMEOUT = 20.0
 _RETRIES = 3
 
 
-class KaminoReserveConfig(BaseModel):
-    loan_to_value_ratio: float | None = Field(None, alias="loanToValueRatio")
-    liquidation_threshold: float | None = Field(None, alias="liquidationThreshold")
-    liquidation_bonus: float | None = Field(None, alias="liquidationBonus")
-    borrow_limit: float | None = Field(None, alias="borrowLimit")
-    deposit_limit: float | None = Field(None, alias="depositLimit")
-    status: str | None = None
+class KaminoReserveMetrics(BaseModel):
+    """One entry from GET /kamino-market/{address}/reserves/metrics."""
+
+    reserve: str  # reserve pubkey
+    liquidity_token: str = Field(alias="liquidityToken")
+    liquidity_token_mint: str | None = Field(None, alias="liquidityTokenMint")
+    max_ltv: str | None = Field(None, alias="maxLtv")      # decimal string e.g. "0.8"
+    borrow_apy: float | None = Field(None, alias="borrowApy")
+    supply_apy: float | None = Field(None, alias="supplyApy")
+    total_supply: str | None = Field(None, alias="totalSupply")
+    total_borrow: str | None = Field(None, alias="totalBorrow")
+    total_borrow_usd: float | None = Field(None, alias="totalBorrowUsd")
+    total_supply_usd: float | None = Field(None, alias="totalSupplyUsd")
 
     model_config = {"extra": "allow", "populate_by_name": True}
 
-
-class KaminoLiquidity(BaseModel):
-    mint_pubkey: str | None = Field(None, alias="mintPubkey")
-    available_amount: float | None = Field(None, alias="availableAmount")
-    mint_decimals: int | None = Field(None, alias="mintDecimals")
-
-    model_config = {"extra": "allow", "populate_by_name": True}
-
-
-class KaminoReserve(BaseModel):
-    """One reserve from GET /v2/kamino-market/{address}/reserves."""
-
-    address: str | None = None
-    symbol: str | None = None  # provided directly by the API if available
-    config: KaminoReserveConfig | None = None
-    liquidity: KaminoLiquidity | None = None
-
-    model_config = {"extra": "allow"}
+    @property
+    def symbol(self) -> str:
+        return self.liquidity_token.upper()
 
     @property
-    def is_active(self) -> bool:
-        return (self.config is not None and
-                (self.config.status or "").lower() == "active")
+    def max_ltv_float(self) -> float | None:
+        try:
+            return float(self.max_ltv) if self.max_ltv else None
+        except ValueError:
+            return None
 
     @property
-    def available_capacity_native(self) -> float | None:
-        return self.liquidity.available_amount if self.liquidity else None
+    def available_capacity_usd(self) -> float | None:
+        if self.total_supply_usd is not None and self.total_borrow_usd is not None:
+            return max(0.0, self.total_supply_usd - self.total_borrow_usd)
+        return None
+
+
+# Keep KaminoReserve as an alias for backwards compatibility with ingestion code
+KaminoReserve = KaminoReserveMetrics
 
 
 class KaminoMarket(BaseModel):
-    """One entry from GET /v2/kamino-market/all."""
+    """One entry from GET /v2/kamino-market?env=mainnet-beta."""
 
     lending_market: str = Field(alias="lendingMarket")
     name: str | None = None
@@ -115,14 +110,14 @@ class KaminoClient:
 
     async def fetch_markets(self) -> list[KaminoMarket]:
         log.info("kamino_fetch_markets_start")
-        data = await self._get("/v2/kamino-market/all")
+        data = await self._get("/v2/kamino-market?env=mainnet-beta")
         markets_raw: list[dict] = data if isinstance(data, list) else data.get("markets", [])
         markets = [KaminoMarket.model_validate(m) for m in markets_raw]
         log.info("kamino_fetch_markets_done", count=len(markets))
         return markets
 
-    async def fetch_reserves(self, market_address: str) -> list[KaminoReserve]:
+    async def fetch_reserves(self, market_address: str) -> list[KaminoReserveMetrics]:
         log.debug("kamino_fetch_reserves", market=market_address)
-        data = await self._get(f"/v2/kamino-market/{market_address}/reserves")
+        data = await self._get(f"/kamino-market/{market_address}/reserves/metrics")
         reserves_raw: list[dict] = data if isinstance(data, list) else data.get("reserves", [])
-        return [KaminoReserve.model_validate(r) for r in reserves_raw]
+        return [KaminoReserveMetrics.model_validate(r) for r in reserves_raw]
