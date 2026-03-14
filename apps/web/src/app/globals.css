@@ -112,6 +112,51 @@ a:hover {
   letter-spacing: 0.08em;
 }
 
+/* DataRefresher badge ---------------------------------------------------- */
+.data-refresher-badge {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  padding: 0.2rem 0.6rem;
+  border-radius: var(--radius);
+  white-space: nowrap;
+  transition: color 0.2s, background 0.2s;
+}
+
+/* refreshing state */
+.data-refresher-badge:has(.data-refresher-spinner) {
+  color: var(--text-muted);
+  background: transparent;
+}
+
+/* done state — subtle green */
+.data-refresher-badge:not(:has(.data-refresher-spinner)):not([title*="failed"]) {
+  color: var(--green-dim);
+}
+
+/* error state */
+.data-refresher-badge[title*="failed"] {
+  color: var(--yellow);
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.data-refresher-spinner {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border: 1.5px solid var(--text-muted);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  flex-shrink: 0;
+}
+
 .app-main {
   padding: 1.5rem;
 }

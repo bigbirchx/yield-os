@@ -146,3 +146,25 @@ export async function fetchLtvMatrix(
     })) ?? []
   );
 }
+
+/**
+ * Trigger a full data refresh across all connectors (DeFiLlama, Aave,
+ * Morpho, Kamino, internal exchange).  Always uses the public API URL so
+ * this is safe to call from client components.
+ *
+ * Returns the ingest result payload on success, or null on failure.
+ */
+export async function triggerIngest(): Promise<Record<string, unknown> | null> {
+  const publicUrl =
+    process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+  try {
+    const res = await fetch(`${publicUrl}/api/admin/ingest`, {
+      method: "POST",
+      cache: "no-store",
+    });
+    if (!res.ok) return null;
+    return res.json() as Promise<Record<string, unknown>>;
+  } catch {
+    return null;
+  }
+}
