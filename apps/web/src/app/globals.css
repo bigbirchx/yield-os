@@ -328,3 +328,269 @@ a:hover {
   gap: 1.5rem;
   font-size: 12px;
 }
+
+/* -----------------------------------------------------------------------
+   Asset page
+----------------------------------------------------------------------- */
+.asset-page {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 1.5rem 1.25rem 4rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.asset-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.75rem 0 0.5rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.asset-header-left {
+  display: flex;
+  align-items: baseline;
+  gap: 1rem;
+}
+
+.asset-symbol {
+  font-family: var(--font-mono);
+  font-size: 1.4rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--text-primary);
+}
+
+.asset-mark-price {
+  font-family: var(--font-mono);
+  font-size: 1rem;
+  color: var(--green);
+}
+
+.asset-header-right {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.asset-snapshot-ts {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+/* ── Section card ─────────────────────────────────────────────────── */
+.section-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.section-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.65rem 1rem;
+  border-bottom: 1px solid var(--border);
+  gap: 0.75rem;
+}
+
+.section-card-title {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.section-card-body {
+  padding: 0;
+}
+
+.section-empty {
+  padding: 1.5rem 1rem;
+  font-size: 11px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+/* ── Data tables (TanStack Table) ─────────────────────────────────── */
+.data-table-wrap {
+  overflow-x: auto;
+  width: 100%;
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.data-table th {
+  padding: 0.45rem 0.75rem;
+  text-align: left;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  user-select: none;
+}
+
+.data-table th.sortable {
+  cursor: pointer;
+}
+
+.data-table th.sortable:hover {
+  color: var(--text-secondary);
+}
+
+.data-table td {
+  padding: 0.4rem 0.75rem;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+  vertical-align: middle;
+}
+
+.data-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.data-table tbody tr:hover td {
+  background: var(--surface-2);
+}
+
+/* ── Table cell helpers ───────────────────────────────────────────── */
+.cell-bold     { font-weight: 600; }
+.cell-dim      { color: var(--text-muted); }
+.cell-mono     { font-family: var(--font-mono); }
+.cell-green    { color: var(--green); }
+.cell-red      { color: var(--red); }
+.cell-yellow   { color: var(--yellow); }
+.cell-orange   { color: var(--orange); }
+.cell-accent   { color: var(--accent); }
+
+/* ── ECharts ──────────────────────────────────────────────────────── */
+.chart-wrap {
+  padding: 0.75rem 1rem;
+}
+
+.chart-title {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  margin-bottom: 0.5rem;
+}
+
+.chart-empty {
+  padding: 2rem 1rem;
+  text-align: center;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* ── Borrow demand card ───────────────────────────────────────────── */
+.borrow-demand-card {
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.borrow-demand-header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.borrow-demand-status {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.borrow-demand-status.elevated { color: var(--yellow); }
+.borrow-demand-status.normal   { color: var(--text-secondary); }
+
+.borrow-demand-label {
+  font-size: 10px;
+  color: var(--text-muted);
+  background: var(--border);
+  padding: 1px 6px;
+  border-radius: 2px;
+  letter-spacing: 0.04em;
+}
+
+.borrow-demand-signals {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.5rem 0.75rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.borrow-signal-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.borrow-signal-label { color: var(--text-secondary); min-width: 220px; }
+.borrow-signal-value { color: var(--text-primary); }
+.borrow-signal-value.elevated { color: var(--yellow); }
+
+.borrow-signal-tag {
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  background: var(--yellow-dim);
+  color: var(--yellow);
+  padding: 1px 5px;
+  border-radius: 2px;
+}
+
+.borrow-demand-note {
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+
+.borrow-demand-note strong { color: var(--text-secondary); }
+
+/* ── Placeholder sections ─────────────────────────────────────────── */
+.placeholder-section {
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.placeholder-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  color: var(--text-muted);
+  background: var(--surface-2);
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 2px;
+}
+
+.placeholder-desc {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.6;
+  max-width: 600px;
+}

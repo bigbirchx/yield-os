@@ -11,6 +11,7 @@ const NAV_LINKS = [
   { href: "/assets/BTC", label: "BTC" },
   { href: "/assets/ETH", label: "ETH" },
   { href: "/assets/SOL", label: "SOL" },
+  { href: "/assets/USDC", label: "USDC" },
 ];
 
 export default function RootLayout({

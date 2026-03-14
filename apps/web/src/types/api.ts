@@ -48,6 +48,72 @@ export interface LendingOverview {
 }
 
 // -----------------------------------------------------------------------
+// Staking (source: DeFiLlama)
+// -----------------------------------------------------------------------
+
+export interface StakingSnapshot {
+  symbol: string;
+  underlying_symbol: string;
+  protocol: string;
+  chain: string;
+  pool_id: string | null;
+  staking_apy: number | null;
+  base_apy: number | null;
+  reward_apy: number | null;
+  tvl_usd: number | null;
+  snapshot_at: string;
+  ingested_at: string;
+}
+
+// -----------------------------------------------------------------------
+// Protocol risk params (source: Aave, Morpho, Kamino)
+// -----------------------------------------------------------------------
+
+export interface ProtocolRiskParams {
+  protocol: string;
+  chain: string;
+  asset: string;
+  debt_asset: string | null;
+  market_address: string | null;
+  max_ltv: number | null;
+  liquidation_threshold: number | null;
+  liquidation_penalty: number | null;
+  borrow_cap_native: number | null;
+  supply_cap_native: number | null;
+  collateral_eligible: boolean | null;
+  borrowing_enabled: boolean | null;
+  is_active: boolean | null;
+  available_capacity_native: number | null;
+  snapshot_at: string;
+  ingested_at: string;
+}
+
+// -----------------------------------------------------------------------
+// Asset history (source: DeFiLlama historical charts)
+// -----------------------------------------------------------------------
+
+export interface LendingHistoryPoint {
+  snapshot_at: string;
+  supply_apy: number | null;
+  borrow_apy: number | null;
+  reward_supply_apy: number | null;
+  tvl_usd: number | null;
+  utilization: number | null;
+}
+
+export interface LendingHistoryMarket {
+  protocol: string;
+  market: string;
+  chain: string | null;
+  data: LendingHistoryPoint[];
+}
+
+export interface AssetHistory {
+  symbol: string;
+  lending: LendingHistoryMarket[];
+}
+
+// -----------------------------------------------------------------------
 // Flattened rows used by overview cards
 // -----------------------------------------------------------------------
 
