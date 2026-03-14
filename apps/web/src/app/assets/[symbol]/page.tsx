@@ -15,6 +15,7 @@ import {
   fetchAssetHistory,
   fetchAssetLending,
   fetchAssetStaking,
+  fetchBorrowDemand,
   fetchLtvMatrix,
 } from "@/lib/api";
 import type { LendingHistoryMarket } from "@/types/api";
@@ -42,12 +43,13 @@ export default async function AssetPage({ params }: PageProps) {
   const sym = symbol.toUpperCase();
 
   // Parallel fetch — all gracefully return empty on error
-  const [lending, derivatives, staking, history, riskParams] = await Promise.all([
+  const [lending, derivatives, staking, history, riskParams, borrowDemand] = await Promise.all([
     fetchAssetLending(sym),
     fetchAssetDerivatives(sym),
     fetchAssetStaking(sym),
     fetchAssetHistory(sym, 30),
     fetchLtvMatrix([sym]),
+    fetchBorrowDemand(sym, 30),
   ]);
 
   // If no data at all and symbol not in our tracked list, treat as 404
@@ -61,20 +63,6 @@ export default async function AssetPage({ params }: PageProps) {
 
   const lendingMarkets = lending?.markets ?? [];
   const historyMarkets = toHistoryMarkets(history);
-
-  // Extract signals for borrow demand card
-  const topFunding = derivatives.length > 0
-    ? Math.max(...derivatives.map((d) => d.funding_rate ?? 0))
-    : null;
-  const topBasis = derivatives.length > 0
-    ? Math.max(...derivatives.map((d) => d.basis_annualized ?? 0))
-    : null;
-  const topBorrowMarket = [...lendingMarkets].sort(
-    (a, b) => (b.borrow_apy ?? 0) - (a.borrow_apy ?? 0)
-  )[0];
-  const peakUtil = lendingMarkets.length > 0
-    ? Math.max(...lendingMarkets.map((m) => m.utilization ?? 0))
-    : null;
 
   const markPrice = derivatives[0]?.mark_price ?? null;
   const latestSnapshot = derivatives[0]?.snapshot_at;
@@ -160,15 +148,11 @@ export default async function AssetPage({ params }: PageProps) {
       </SectionCard>
 
       {/* ── Borrow demand explainer ─────────────────────────────── */}
-      <SectionCard title="Why Is Borrow Demand Elevated?">
-        <BorrowDemandCard
-          symbol={sym}
-          fundingRate={topFunding}
-          basisAnnualized={topBasis}
-          topBorrowApy={topBorrowMarket?.borrow_apy}
-          topBorrowProtocol={topBorrowMarket?.protocol}
-          utilization={peakUtil}
-        />
+      <SectionCard
+        title="Why Is Borrow Demand Elevated?"
+        source="Velo · DeFiLlama · internal engine"
+      >
+        <BorrowDemandCard analysis={borrowDemand} symbol={sym} />
       </SectionCard>
 
       {/* ── Transforms (placeholder) ───────────────────────────── */}

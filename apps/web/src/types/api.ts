@@ -114,6 +114,44 @@ export interface AssetHistory {
 }
 
 // -----------------------------------------------------------------------
+// Borrow-demand explanation engine (source: internal engine)
+// -----------------------------------------------------------------------
+
+export interface ReasonFactor {
+  name: string;
+  display_label: string;
+  direction: "elevates" | "suppresses" | "neutral";
+  score: number;
+  value: number | null;
+  baseline: number | null;
+  value_unit: string;
+  metric_source: string;
+  metric_name: string;
+  snapshot_at: string | null;
+  evidence_note: string;
+}
+
+export interface EventOverlay {
+  label: string;
+  event_date: string;
+  impact: "elevates" | "suppresses" | "neutral";
+  source: string;
+  notes: string;
+}
+
+export interface BorrowDemandAnalysis {
+  symbol: string;
+  demand_level: "elevated" | "normal" | "suppressed";
+  demand_score: number;
+  confidence: number;
+  reasons: ReasonFactor[];
+  explanation: string;
+  computed_at: string;
+  data_window_days: number;
+  event_overlays: EventOverlay[];
+}
+
+// -----------------------------------------------------------------------
 // Flattened rows used by overview cards
 // -----------------------------------------------------------------------
 

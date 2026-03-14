@@ -1,5 +1,6 @@
 import type {
   AssetHistory,
+  BorrowDemandAnalysis,
   DerivativesOverview,
   DerivativesSnapshot,
   LendingOverview,
@@ -97,6 +98,15 @@ export async function fetchAssetHistory(
 ): Promise<AssetHistory | null> {
   return apiFetch<AssetHistory>(
     `/api/assets/${symbol}/history?days=${days}`
+  );
+}
+
+export async function fetchBorrowDemand(
+  symbol: string,
+  days = 30
+): Promise<BorrowDemandAnalysis | null> {
+  return apiFetch<BorrowDemandAnalysis>(
+    `/api/assets/${symbol}/borrow-demand?days=${days}`
   );
 }
 
