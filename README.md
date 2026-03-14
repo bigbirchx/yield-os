@@ -22,3 +22,4 @@ This repo currently contains:
 
 ## Project path
 /home/ec2-user/cdb_workspace/yield-os
+# yield-os
