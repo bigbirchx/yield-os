@@ -19,13 +19,11 @@ class Settings(BaseSettings):
     velo_api_key: str = ""
     defillama_api_key: str = ""
 
-    # Direct protocol connector settings
-    # Aave: uses The Graph subgraph (free API key from https://thegraph.com)
-    aave_subgraph_key: str = ""
-    aave_subgraph_url: str = (
-        "https://gateway-arbitrum.network.thegraph.com/api/{key}/subgraphs/id/"
-        "JCNWRypm7FYwV8fx5HhzZPSFaMxgkPuw4TnWm89byKeU"
-    )
+    # Aave: official GraphQL API — no key required, public endpoint
+    # Source: https://aave.com/docs/aave-v3/getting-started/graphql
+    aave_api_url: str = "https://api.v3.aave.com/graphql"
+    # Comma-separated chain IDs to ingest (1=Eth, 42161=Arbitrum, 8453=Base, 10=Optimism)
+    aave_chain_ids: str = "1,42161,8453,10"
 
     # Morpho Blue: public GraphQL API, no key required
     morpho_api_url: str = "https://blue-api.morpho.org/graphql"

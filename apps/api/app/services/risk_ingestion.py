@@ -15,7 +15,7 @@ from datetime import UTC, datetime
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.connectors.aave_client import AaveClient, AaveReserve
+from app.connectors.aave_client import AaveClient, AaveReserve, DEFAULT_CHAIN_IDS
 from app.connectors.kamino_client import KaminoClient, KaminoReserve
 from app.connectors.morpho_client import MorphoClient, MorphoMarket
 from app.core.config import settings
@@ -29,20 +29,23 @@ log = structlog.get_logger(__name__)
 # ---------------------------------------------------------------------------
 
 def _from_aave(reserve: AaveReserve, now: datetime) -> ProtocolRiskParamsSnapshot:
+    # protocol label includes the market name for multi-market chains
+    # e.g. "aave-v3/AaveV3EthereumLido" vs "aave-v3/AaveV3Ethereum"
+    protocol = f"aave-v3/{reserve.market_name}" if reserve.market_name else "aave-v3"
     return ProtocolRiskParamsSnapshot(
-        protocol="aave-v3",
-        chain="Ethereum",
-        asset=reserve.symbol.upper(),
-        market_address=reserve.underlying_asset,
+        protocol=protocol,
+        chain=reserve.chain_name or "Ethereum",
+        asset=reserve.symbol,
+        market_address=reserve.underlying_token.address,
         max_ltv=reserve.max_ltv,
         liquidation_threshold=reserve.liq_threshold,
         liquidation_penalty=reserve.liq_penalty,
         borrow_cap_native=reserve.borrow_cap_native,
         supply_cap_native=reserve.supply_cap_native,
-        collateral_eligible=reserve.usage_as_collateral_enabled,
-        borrowing_enabled=reserve.borrowing_enabled,
-        is_active=reserve.is_active and not reserve.is_frozen,
-        available_capacity_native=reserve.available_capacity_native,
+        collateral_eligible=reserve.supply_info.can_be_collateral,
+        borrowing_enabled=reserve.borrow_info.borrowing_enabled,
+        is_active=reserve.is_active,
+        available_capacity_native=reserve.available_capacity_usd,
         raw_payload=reserve.model_dump(by_alias=True),
         snapshot_at=now,
     )
@@ -98,17 +101,19 @@ def _from_kamino(
 # ---------------------------------------------------------------------------
 
 async def ingest_aave(db: AsyncSession) -> int:
-    if not settings.aave_subgraph_key:
-        log.warning("aave_ingestion_skipped", reason="AAVE_SUBGRAPH_KEY not set")
-        return 0
-    url = settings.aave_subgraph_url.format(key=settings.aave_subgraph_key)
-    async with AaveClient(subgraph_url=url) as client:
-        reserves = await client.fetch_reserves()
+    """
+    Ingest Aave v3 risk params from the official API (no key required).
+
+    Chain IDs are read from settings.aave_chain_ids (comma-separated).
+    """
+    chain_ids = [int(c.strip()) for c in settings.aave_chain_ids.split(",") if c.strip()]
+    async with AaveClient(api_url=settings.aave_api_url) as client:
+        reserves = await client.fetch_reserves(chain_ids=chain_ids)
     now = datetime.now(UTC)
     rows = [_from_aave(r, now) for r in reserves]
     db.add_all(rows)
     await db.commit()
-    log.info("aave_ingestion_done", rows=len(rows))
+    log.info("aave_ingestion_done", rows=len(rows), chains=chain_ids)
     return len(rows)
 
 

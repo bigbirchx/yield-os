@@ -36,6 +36,7 @@ router = APIRouter(prefix="/api/admin", tags=["admin"])
 class IngestResult(BaseModel):
     triggered_at: datetime
     defillama: dict[str, int]
+    aave: dict[str, str | int]
     morpho: dict[str, str | int]
     kamino: dict[str, str | int]
 
@@ -66,8 +67,15 @@ async def trigger_ingest(db: AsyncSession = Depends(get_db)) -> IngestResult:
     # DeFiLlama (lending + staking)
     defillama_counts = await defillama_ingest_all(db)
 
-    # Morpho + Kamino risk params — each is best-effort and independently isolated
-    from app.services.risk_ingestion import ingest_morpho, ingest_kamino
+    # Aave, Morpho, Kamino risk params — each is best-effort and independently isolated
+    from app.services.risk_ingestion import ingest_aave, ingest_morpho, ingest_kamino
+
+    aave_counts: dict[str, str | int] = {}
+    try:
+        aave_counts["rows"] = await ingest_aave(db)
+    except Exception as exc:
+        log.error("admin_ingest_aave_error", error=str(exc))
+        aave_counts["error"] = str(exc)
 
     morpho_counts: dict[str, str | int] = {}
     try:
@@ -83,10 +91,11 @@ async def trigger_ingest(db: AsyncSession = Depends(get_db)) -> IngestResult:
         log.error("admin_ingest_kamino_error", error=str(exc))
         kamino_counts["error"] = str(exc)
 
-    log.info("admin_ingest_complete", defillama=defillama_counts)
+    log.info("admin_ingest_complete", defillama=defillama_counts, aave=aave_counts)
     return IngestResult(
         triggered_at=now,
         defillama=defillama_counts,
+        aave=aave_counts,
         morpho=morpho_counts,
         kamino=kamino_counts,
     )
