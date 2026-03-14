@@ -729,3 +729,84 @@ Section 4 — Controls
 - DTE = 0 or negative: exclude from term structure (contract has expired)
 - Add tests with all exchange REST calls mocked
 - Keep consistent with the connector patterns already established
+
+---
+
+## Prompt 13 — Bug fixes: funding history, Deribit basis, overview data (2026-03-14)
+
+### Issues addressed
+1. Overview page showed "no funding data — run ingestion first" for all derivatives sections
+2. Funding rate history charts showed no data for any exchange
+3. Deribit was absent from the Basis term structure dashboard
+4. Basis term structure was scatter-only (no line connecting venue dots)
+
+### Root cause
+The Docker API container had no access to `/home/ec2-user/workspace/` at runtime,
+so `_HAS_APIS = False` and all internal connector paths (MongoDB history,
+PerpFuture class, ad_derivs_funcs) were silently disabled. The service fell
+back to empty DataFrames / empty lists for every exchange.
+
+### Changes
+
+**`apps/api/app/services/funding_service.py`**
+- Added `_binance_rest_history`, `_okx_rest_history`, `_bybit_rest_history`,
+  `_deribit_rest_history` — public REST fallbacks using Binance FAPI,
+  OKX, Bybit v5, and Deribit public history endpoints respectively.
+- Fixed Deribit field name: `interest_8h` (not `interest`).
+- Modified `_mongo_history` to attempt MongoDB first then fall back to REST.
+- Modified `_fetch_binance._live()`, `_fetch_okx._live()`, `_fetch_bybit._history()`,
+  `_fetch_deribit._history()` / `._oi()` to use REST fallbacks when reference
+  codebase is unavailable.
+- Modified `get_funding_history` for bybit/deribit to use REST fallbacks.
+
+**`apps/api/app/services/basis_service.py`**
+- Removed `sys.path` injection + `_HAS_DERIBIT` entirely.
+- Replaced `_fetch_deribit_snapshot` with direct Deribit public REST:
+  `get_book_summary_by_currency` for mark prices + `get_index_price` for the
+  BTC/ETH index. No API key required.
+- Replaced `_deribit_history` with direct Deribit `get_tradingview_chart_data`
+  for both the futures contract and the price index (daily resolution).
+- Fixed CME functions to look up `settings.amberdata_derivs_key` (new config
+  field) instead of a module-level `_AD_DERIVS_KEY`.
+
+**`apps/api/app/core/config.py`**
+- Added `amberdata_derivs_key: str = ""` setting for CME futures.
+
+**`apps/api/app/connectors/internal/exchange_client.py`**
+- `get_current_funding_rate`: tries reference codebase first, then falls back
+  to Binance FAPI `premiumIndex` / OKX `funding-rate` REST.
+- `get_market_metrics`: tries reference codebase first, then falls back to
+  Binance `openInterest` / OKX `open-interest` REST.
+
+**`apps/api/app/services/internal_ingestion.py`**
+- Removed `if not _HAS_APIS: return {}` gate; REST fallbacks now populate
+  `derivatives_snapshots` even without the reference codebase.
+
+**`apps/api/app/routers/admin.py`**
+- `POST /api/admin/ingest` now also calls `internal_ingest_all` so
+  derivatives snapshot data (used by the overview page) is written on demand.
+
+**`apps/web/src/app/basis/page.tsx`**
+- Upgraded term structure chart from plain scatter to line+scatter:
+  dashed line per venue connects the dots; scatter dots remain for tooltips.
+  Legend shows only the line series (no duplicate entries).
+
+**`apps/web/src/app/overview/page.tsx`**
+- Updated empty state messages to be informative and point to the dedicated
+  Funding and Basis pages instead of saying "run ingestion first".
+
+**`docker-compose.yml`**
+- Added `/home/ec2-user/workspace:/home/ec2-user/workspace:ro` volume mount
+  to the API service so reference codebase imports succeed when present.
+
+### Verification
+- `GET /api/basis/snapshot?symbol=BTC` → venues: deribit (6), binance (2), bybit (8)
+- `GET /api/funding/history?exchange=binance` → 30 points
+- `GET /api/funding/history?exchange=bybit` → 30 points
+- `GET /api/funding/history?exchange=okx` → 34 points
+- `GET /api/funding/history?exchange=deribit` → 31 points
+- `POST /api/admin/ingest` populates derivatives_snapshots; overview page shows
+  Binance + OKX funding rates
+
+### Commit
+`5e03e65` — fix(api,web): direct REST fallbacks + Deribit basis + live ingestion
