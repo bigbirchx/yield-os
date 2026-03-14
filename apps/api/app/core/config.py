@@ -33,6 +33,11 @@ class Settings(BaseSettings):
     # Kamino: public REST API, no key required
     kamino_api_url: str = "https://api.kamino.finance"
 
+    # CoinGecko: Pro key lifts rate limits and unlocks /simple/price bulk endpoint
+    # Free tier (no key) works for low-volume dev use
+    coingecko_api_key: str = ""
+    coingecko_api_url: str = "https://pro-api.coingecko.com/api/v3"
+
     @property
     def database_url(self) -> str:
         return (
