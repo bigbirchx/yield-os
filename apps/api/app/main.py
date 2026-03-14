@@ -9,6 +9,8 @@ from app.routers import (
     admin,
     borrow_demand,
     derivatives,
+    funding_history,
+    funding_snapshot,
     health,
     internal_derivatives,
     lending,
@@ -44,6 +46,8 @@ app.include_router(health.router)
 app.include_router(admin.router)
 app.include_router(derivatives.router)
 app.include_router(internal_derivatives.router)
+app.include_router(funding_snapshot.router)
+app.include_router(funding_history.router)
 app.include_router(lending.router)
 app.include_router(risk.router)
 app.include_router(staking.router)

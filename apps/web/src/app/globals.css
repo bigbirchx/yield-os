@@ -1291,3 +1291,201 @@ details[open] .assumptions-summary::before { content: "▼  "; }
   line-height: 1.6;
   max-width: 600px;
 }
+
+/* ── Funding Rate Dashboard ───────────────────────────────────────────────── */
+
+.fn-page {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.fn-loading,
+.fn-empty {
+  padding: 1.5rem;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-family: var(--font-mono);
+}
+
+/* Snapshot table */
+.fn-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.fn-table th {
+  padding: 0.45rem 0.75rem;
+  text-align: right;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border-subtle);
+  white-space: nowrap;
+}
+.fn-table th:first-child { text-align: left; }
+.fn-table td {
+  padding: 0.4rem 0.75rem;
+  text-align: right;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border-subtle);
+  white-space: nowrap;
+}
+.fn-table td:first-child { text-align: left; }
+.fn-table tr:last-child td { border-bottom: none; }
+.fn-table tbody tr:hover { background: var(--surface-2); }
+
+.fn-exch-name {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-weight: 500;
+  color: var(--text-primary) !important;
+}
+
+.fn-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.fn-badge {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--surface-2);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  letter-spacing: 0.04em;
+}
+
+.fn-blend-row td {
+  padding-top: 0.25rem;
+  padding-bottom: 0.25rem;
+  opacity: 0.8;
+}
+
+/* Controls */
+.fn-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem 2rem;
+  align-items: flex-start;
+  padding: 0.85rem 1rem;
+}
+
+.fn-control-group {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.fn-control-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  margin-right: 0.35rem;
+  user-select: none;
+  display: flex;
+  align-items: center;
+}
+
+.fn-chip {
+  padding: 0.2rem 0.55rem;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s, color 0.12s;
+}
+.fn-chip:hover { background: var(--surface-2); color: var(--text-primary); }
+.fn-chip--active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.fn-checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+.fn-checkbox-label input[type="checkbox"] { accent-color: var(--accent); }
+
+.fn-ma-input {
+  width: 46px;
+  padding: 0.15rem 0.35rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-primary);
+  text-align: right;
+  -moz-appearance: textfield;
+}
+.fn-ma-input::-webkit-inner-spin-button { display: none; }
+
+/* Distribution controls */
+.fn-dist-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.5rem;
+  padding: 0 1rem 0.75rem;
+}
+
+.fn-pct-table {
+  margin-top: 0.75rem;
+}
+
+/* Coinglass strip */
+.fn-cg-strip {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.75rem 1.5rem;
+  padding: 0.65rem 1rem;
+  border-left: 3px solid var(--border);
+}
+
+.fn-cg-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  margin-right: 0.5rem;
+}
+
+.fn-cg-badge {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 12px;
+  padding: 0.2rem 0.6rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.fn-cg-ts {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-left: auto;
+}

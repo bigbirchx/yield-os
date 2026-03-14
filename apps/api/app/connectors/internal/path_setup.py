@@ -10,10 +10,11 @@ from pathlib import Path
 # ── Reference library paths (READ ONLY — never write here) ──────────────────
 _EXODUS_ROOT      = Path("/home/ec2-user/workspace/exodus")
 _MIGRATION_LIB    = _EXODUS_ROOT / "analytics_frontend/streamlit/migration/lib"
+_STREAMLIT_DIR    = _EXODUS_ROOT / "analytics_frontend/streamlit"  # bullish.py lives here
 _TRADERS_WRAPPERS = Path("/home/ec2-user/workspace/traders/src/wrappers")
 _GRIFF_COMMON     = Path("/home/ec2-user/workspace/griff/common")
 
-for _p in [_EXODUS_ROOT, _MIGRATION_LIB, _TRADERS_WRAPPERS, _GRIFF_COMMON]:
+for _p in [_EXODUS_ROOT, _MIGRATION_LIB, _STREAMLIT_DIR, _TRADERS_WRAPPERS, _GRIFF_COMMON]:
     if _p.exists() and str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
 # ── All new files must be written inside the yield-os project ────────────────
@@ -41,6 +42,7 @@ try:
         get_xccy_funding_rate_history,
     )
     from perps import PerpFuture  # type: ignore[import]
+    from bullish import Bullish  # type: ignore[import]
 
     _HAS_APIS = True
 except Exception as _import_err:
@@ -60,6 +62,7 @@ except Exception as _import_err:
     get_annualized_funding_rate_history = None
     get_xccy_funding_rate_history = None
     PerpFuture = None
+    Bullish = None
 
 __all__ = [
     "_HAS_APIS",
@@ -77,4 +80,5 @@ __all__ = [
     "get_annualized_funding_rate_history",
     "get_xccy_funding_rate_history",
     "PerpFuture",
+    "Bullish",
 ]

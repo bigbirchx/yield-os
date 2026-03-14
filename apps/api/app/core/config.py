@@ -36,6 +36,18 @@ class Settings(BaseSettings):
     coingecko_api_key: str = ""
     coingecko_api_url: str = "https://pro-api.coingecko.com/api/v3"
 
+    # Bullish exchange — credentials from .env
+    # Public/private key pair from Bullish institutional portal
+    bullish_public_key: str = ""
+    bullish_private_key: str = ""
+    bullish_api_hostname: str = ""
+    bullish_options_mm_account_id: str = ""
+
+    # Coinglass — secondary/cross-check source for funding rates
+    # Free-tier basic endpoint works without a key; key required for advanced data
+    coinglass_api_key: str = ""
+    coinglass_api_url: str = "https://open-api.coinglass.com/public/v2"
+
     @property
     def database_url(self) -> str:
         return (
