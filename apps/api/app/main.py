@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.routers import (
     admin,
+    basis,
     borrow_demand,
     derivatives,
     funding_history,
@@ -45,6 +46,7 @@ app.add_middleware(
 
 app.include_router(health.router)
 app.include_router(admin.router)
+app.include_router(basis.router)
 app.include_router(derivatives.router)
 app.include_router(internal_derivatives.router)
 app.include_router(funding_snapshot.router)

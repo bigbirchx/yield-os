@@ -209,6 +209,66 @@ export async function fetchSources(): Promise<SourceStatus[]> {
   }
 }
 
+// -----------------------------------------------------------------------
+// Basis (dated futures term structure)
+// -----------------------------------------------------------------------
+
+export interface BasisTermRow {
+  venue: string;
+  contract: string;
+  expiry: string;
+  days_to_expiry: number;
+  futures_price: number;
+  index_price: number;
+  basis_usd: number;
+  basis_pct_ann: number | null;
+  oi_coin: number | null;
+  oi_usd: number | null;
+  volume_24h_usd: number | null;
+}
+
+export interface BasisSnapshot {
+  symbol: string;
+  as_of: string;
+  term_structure: BasisTermRow[];
+}
+
+export interface BasisHistoryPoint {
+  timestamp: string;
+  basis_usd: number | null;
+  basis_pct_ann: number | null;
+  futures_price: number | null;
+  index_price: number | null;
+  days_to_expiry: number | null;
+}
+
+export interface BasisHistory {
+  symbol: string;
+  venue: string;
+  contract: string;
+  expiry: string | null;
+  series: BasisHistoryPoint[];
+}
+
+export async function fetchBasisSnapshot(symbol = "BTC"): Promise<BasisSnapshot | null> {
+  return apiFetch<BasisSnapshot>(`/api/basis/snapshot?symbol=${symbol}`);
+}
+
+export async function fetchBasisHistory(
+  symbol: string,
+  venue: string,
+  contract: string,
+  days = 89
+): Promise<BasisHistory | null> {
+  const qs = new URLSearchParams({
+    symbol,
+    venue,
+    contract,
+    days: String(days),
+  });
+  return apiFetch<BasisHistory>(`/api/basis/history?${qs}`);
+}
+
 /**
  * Trigger a full data refresh across all connectors (DeFiLlama, Aave,
  * Morpho, Kamino, internal exchange).  Always uses the public API URL so

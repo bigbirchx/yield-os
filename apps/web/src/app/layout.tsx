@@ -11,6 +11,7 @@ export const metadata: Metadata = {
 const NAV_LINKS = [
   { href: "/overview", label: "Overview" },
   { href: "/funding", label: "Funding" },
+  { href: "/basis", label: "Basis" },
   { href: "/assets/BTC", label: "BTC" },
   { href: "/assets/ETH", label: "ETH" },
   { href: "/assets/SOL", label: "SOL" },

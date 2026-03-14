@@ -1634,3 +1634,227 @@ details[open] .assumptions-summary::before { content: "▼  "; }
   color: var(--text-muted);
   margin-left: auto;
 }
+
+/* ==========================================================================
+   Basis Dashboard  (.bs-*)
+   ========================================================================== */
+
+.bs-page {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 1.5rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.bs-header {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.bs-title-block {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+}
+
+.bs-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: 0.02em;
+}
+
+.bs-as-of {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+.bs-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1rem;
+}
+
+.bs-control-group {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.bs-control-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-right: 0.2rem;
+}
+
+.bs-btn {
+  padding: 0.2rem 0.6rem;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  background: var(--surface);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+  white-space: nowrap;
+}
+
+.bs-btn:hover {
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
+
+.bs-btn--active {
+  background: rgba(59, 130, 246, 0.1);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.bs-btn--refresh {
+  margin-left: auto;
+  border-color: var(--border);
+  color: var(--text-secondary);
+}
+
+.bs-loading {
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: 0.5rem 0;
+}
+
+.bs-error {
+  font-size: 12px;
+  color: var(--red);
+  padding: 0.5rem 0.75rem;
+  background: var(--red-dim);
+  border-radius: var(--radius);
+  border: 1px solid var(--red);
+}
+
+.bs-empty {
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: 1.5rem;
+  text-align: center;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+}
+
+.bs-section {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1rem 1.25rem;
+}
+
+.bs-section--chart {
+  min-height: 360px;
+}
+
+.bs-section-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 0.75rem;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.bs-section-hint {
+  font-size: 10px;
+  color: var(--text-muted);
+  text-transform: none;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+
+.bs-table-wrap {
+  overflow-x: auto;
+}
+
+.bs-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.bs-table th {
+  padding: 0.4rem 0.75rem;
+  text-align: right;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.bs-table th:first-child,
+.bs-table td:first-child {
+  text-align: left;
+}
+
+.bs-table td {
+  padding: 0.45rem 0.75rem;
+  text-align: right;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
+.bs-tr {
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.bs-tr:hover {
+  background: var(--surface-2);
+}
+
+.bs-tr--selected {
+  background: rgba(59, 130, 246, 0.07);
+}
+
+.bs-mono {
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.bs-venue-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  margin-right: 0.4rem;
+  flex-shrink: 0;
+}
+
+.bs-basis-cell {
+  font-weight: 600;
+}
+
+.bs-hist-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.5rem;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.bs-hist-days {
+  display: flex;
+  gap: 0.35rem;
+}
