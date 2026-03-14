@@ -141,3 +141,591 @@ Output:
 - short explanation for ranking
 
 Keep assumptions explicit and preserve hooks for manual metadata later.
+
+## Prompt 9 — internal exchange data layer (perps, funding, RV)
+Read docs/PROJECT_BRIEF.md, docs/DATA_DICTIONARY.md, docs/SOURCE_MAP.md,
+and docs/OTHER_WORKSPACE_BRIEF.md first.
+
+docs/OTHER_WORKSPACE_BRIEF.md is a complete technical reference for an internal
+production codebase at /home/ec2-user/workspace/ that contains live exchange
+connectors and market data libraries. Use it as your sole guide for this prompt.
+Do not explore /home/ec2-user/workspace/ beyond what the brief already documents.
+Do not edit, modify, create, or delete any file under /home/ec2-user/workspace/.
+
+Implement an internal exchange data layer that supplements the external API
+connectors (Velo, DeFiLlama) with live and historical data sourced from the
+internal codebase via sys.path injection as described in the brief.
+
+Requirements:
+- sys.path injection module at apps/api/app/connectors/internal/path_setup.py
+  following the exact pattern in the brief
+- typed client at apps/api/app/connectors/internal/exchange_client.py exposing:
+    - get_funding_rate_history(base_ccy, exchange, day_count) → normalized DataFrame
+    - get_current_funding_rate(base_ccy, exchange) → float (annualized)
+    - get_xccy_funding_spread(base_ccy, quote_ccy, day_count) → DataFrame
+    - get_perp_mark_price_ohlc(base_ccy, days_lookback) → DataFrame
+    - get_realized_vol(base_ccy, day_counts) → DataFrame
+    - get_market_metrics(base_ccy, exchange) → dict (OI, volume)
+- normalize all outputs into the derivatives_snapshot schema already established
+- all timestamps UTC-aware, funding rates annualized, consistent with existing connectors
+- graceful fallback if internal paths are unavailable (log warning, return empty)
+- add scheduled ingestion job for BTC, ETH, SOL every 5 minutes alongside Velo
+- add GET /api/derivatives/funding/history?symbol=BTC&exchange=binance&days=365
+- add GET /api/derivatives/funding/current?symbol=BTC
+- add GET /api/derivatives/rv?symbol=BTC
+- add tests with the internal calls mocked (do not call live exchange APIs in tests)
+
+Constraints:
+- all new files go exclusively inside /home/ec2-user/cdb_workspace/yield-os/
+- never write to /home/ec2-user/workspace/ under any circumstance
+- do not copy source files from the reference repo; import via sys.path only
+- keep implementation MVP-simple and consistent with existing connector patterns
+
+## Prompt 10 — multi-exchange funding rate dashboard
+Read docs/PROJECT_BRIEF.md, docs/DATA_DICTIONARY.md, docs/SOURCE_MAP.md,
+and docs/OTHER_WORKSPACE_BRIEF.md first.
+
+docs/OTHER_WORKSPACE_BRIEF.md documents the internal reference codebase.
+Use it for all data access patterns. Do not edit anything under
+/home/ec2-user/workspace/.
+
+Implement a multi-exchange perpetual funding rate dashboard as a new page
+at apps/web/app/funding/page.tsx backed by a new FastAPI router at
+apps/api/app/routers/funding_snapshot.py.
+
+---
+
+## Data layer — what to build vs. what to wire up
+
+The following exchange connectors already exist in the reference repo and must
+be imported via sys.path injection (see OTHER_WORKSPACE_BRIEF.md section 2):
+
+  Binance  — full history (3 years) + live predicted rate + OI + volume
+             via PerpFuture._get_binance_funding_rate_history()
+             and migration/lib/binance_funcs.get_binance_predicted_funding_rate()
+             and migration/lib/binance_funcs.get_binance_market_metrics()
+
+  OKX      — full history (paginated) + live rate
+             via PerpFuture._get_okx_funding_rate_history()
+             and migration/lib/okx_funcs.get_okx_funding_rate()
+
+  Bybit    — full history (cursor-paginated) + live mark price
+             via PerpFuture._get_bybit_funding_rate_history()
+             Live current rate must be fetched directly from:
+             GET https://api.bybit.com/v5/market/tickers?category=linear&symbol={symbol}
+             field: fundingRate (current period rate, not yet settled)
+
+  Deribit  — history via interest_1h field, annualized as rate * 365 * 24
+             via PerpFuture._get_deribit_funding_rate_history()
+             Live rate from: GET https://www.deribit.com/api/v2/public/ticker
+             field: funding_8h (annualize as * 3 for daily * 365 for annual)
+             OI from: PerpFuture._get_deribit_open_interest()
+
+  Bullish  — live funding rates via Bullish(public_key, private_key).get_funding_rates()
+             Historical funding via get_derivatives_settlement_history() (90-day window)
+             Credentials from .env: BULLISH_PUBLIC_KEY, BULLISH_PRIVATE_KEY,
+             BULLISH_API_HOSTNAME, BULLISH_OPTIONS_MM_ACCOUNT_ID
+             Bullish class lives at:
+             /home/ec2-user/workspace/exodus/analytics_frontend/streamlit/bullish.py
+             Add its parent dir to sys.path alongside the other injected paths.
+
+The following does NOT exist in the reference repo and must be built from scratch:
+  - Coinglass connector (add as a secondary/fallback source)
+    Public endpoint (no auth required for basic data):
+    GET https://open-api.coinglass.com/public/v2/funding
+    Use COINGLASS_API_KEY from environment for rate-limited endpoints.
+    Map response fields: symbol, uFundingRate (Binance), oFundingRate (OKX),
+    bybitFundingRate, dydxFundingRate. Use as a cross-check / secondary display only.
+  - Blended rate logic (build fresh, described below)
+  - Exchange Funding Snapshot table (build fresh, described below)
+
+---
+
+## Backend — apps/api/app/routers/funding_snapshot.py
+
+Create GET /api/funding/snapshot?symbol=BTC
+
+Response shape:
+{
+  "symbol": "BTC",
+  "as_of": "<ISO timestamp>",
+  "exchanges": {
+    "binance":  { "live_apr": float, "last_apr": float, "funding_interval_hours": float,
+                  "oi_coin": float, "oi_usd": float, "volume_coin_24h": float,
+                  "ma_7d_apr": float, "ma_30d_apr": float },
+    "okx":      { same shape },
+    "bybit":    { same shape },
+    "deribit":  { same shape },
+    "bullish":  { live_apr, last_apr, funding_interval_hours only — no OI/volume }
+  },
+  "blended": {
+    "equal_weighted_apr": float,
+    "oi_weighted_apr": float,
+    "volume_weighted_apr": float
+  },
+  "coinglass": { "binance_apr": float, "okx_apr": float, "bybit_apr": float }
+}
+
+Blending logic:
+- Fetch live_apr and oi_usd / volume_coin_24h per exchange
+- Equal weighted: mean of available live_apr values
+- OI weighted: sum(live_apr_i * oi_usd_i) / sum(oi_usd_i) — skip exchanges with no OI
+- Volume weighted: sum(live_apr_i * volume_coin_24h_i) / sum(volume_coin_24h_i)
+- Exclude any exchange from a weighted blend if its weight metric is 0 or unavailable
+- funding_interval_hours: derive from the time delta between the last two funding events
+  in the history DataFrame (diff of timestamps)
+
+For ma_7d_apr and ma_30d_apr:
+- Fetch history via the reference repo connectors
+- Resample to daily mean of annualized_funding_rate
+- Compute rolling(7).mean() and rolling(30).mean(), take the latest value
+- Cache results for 5 minutes (TTL cache or Redis)
+
+---
+
+## Backend — apps/api/app/routers/funding_history.py
+
+Create GET /api/funding/history?symbol=BTC&exchange=binance&days=365&blend=false
+
+When blend=false: return raw annualized_funding_rate time series for one exchange.
+When blend=true: fetch all available exchanges, resample to daily mean per exchange,
+align timestamps, compute all three blended series (equal, OI-weighted, volume-weighted)
+and return all series in one response.
+
+Response shape:
+{
+  "symbol": "BTC",
+  "exchange": "blended" | exchange name,
+  "series": [{ "date": "YYYY-MM-DD", "value": float }, ...],
+  "blend_series"?: {
+    "equal_weighted": [...],
+    "oi_weighted": [...],
+    "volume_weighted": [...]
+  }
+}
+
+---
+
+## Frontend — apps/web/app/funding/page.tsx
+
+Build a full-width funding rate dashboard page.
+
+Section 1 — Exchange Funding Snapshot table (top of page)
+Columns: Exchange | Live APR | Last APR | 7d MA APR | 30d MA APR | OI (USD) |
+         Funding Interval (hrs) | Volume Coin 24h
+Rows: Binance, OKX, Bybit, Deribit, Bullish, Blended (all three variants as sub-rows)
+- Color-code APR cells: green for positive, red for negative
+- Source: GET /api/funding/snapshot
+
+Section 2 — Controls
+- Symbol selector (BTC, ETH, SOL default)
+- Exchange checkboxes: Binance, OKX, Bybit, Deribit, Bullish (default all checked)
+- Blend toggle: off / equal-weighted / OI-weighted / volume-weighted
+- Days of history slider (30, 90, 180, 365)
+- Moving average periods: three configurable inputs (default 7, 30, 90 days)
+
+Section 3 — Time-series chart (ECharts)
+- Plot daily annualized funding rate for each selected exchange as separate lines
+- When blend is active, show the blended series as a bold overlay line
+- Show the three configurable MA lines for the selected/blended series
+- Tooltip shows all exchange values at the hovered date
+
+Section 4 — Distribution analysis (below chart)
+- Histogram + KDE overlay for each MA period
+- KDE bandwidth slider (0.05–1.5, default 0.4)
+- Percentile slider with annotation on histogram
+- KDE percentile table (5th, 25th, 50th, 75th, 95th) per MA period
+- Box plot comparing the three MA period distributions
+
+Section 5 — Coinglass cross-check strip
+- Small row of badges showing Coinglass-sourced live rates for Binance, OKX, Bybit
+- Labeled "Source: Coinglass" with freshness timestamp
+- Show delta vs. internal rate for each exchange
+
+---
+
+## Constraints
+- All new files go exclusively inside /home/ec2-user/cdb_workspace/yield-os/
+- Never write to /home/ec2-user/workspace/ under any circumstance
+- Import reference connectors via sys.path injection only — do not copy source files
+- Bullish OI and volume are not available from the API; show "—" in those cells
+- Deribit funding is USD-settled (not USDT); note this in the tooltip
+- OKX and Bybit OI endpoints are not implemented in perps.py (_get_okx_open_interest
+  and _get_bybit_open_interest raise NotImplementedError) — call their REST APIs
+  directly for those fields:
+    Bybit OI: GET https://api.bybit.com/v5/market/tickers?category=linear&symbol=BTCUSDT
+              field: openInterest (coin), openInterestValue (USD)
+    OKX OI:   GET https://www.okx.com/api/v5/public/open-interest?instId=BTC-USDT-SWAP
+              field: oiCcy (coin), oiUsd (USD)
+- Add tests with all external API calls mocked
+- Keep implementation consistent with the connector and endpoint patterns already
+  established for Velo and DeFiLlama
+
+  ## Prompt 11 - CoinGecko Integration
+  Read these files first:
+- docs/PROJECT_BRIEF.md
+- docs/DATA_DICTIONARY.md
+- docs/SOURCE_MAP.md
+- docs/GIT_WORKFLOW.md
+
+We are adding CoinGecko Pro API to Yield OS in a way that is useful for an institutional crypto yield cockpit.
+
+High-level intent:
+Use CoinGecko as a MARKET REFERENCE and ASSET METADATA layer, not as the primary source for protocol-native lending parameters or derivatives structure.
+Keep Velo as the primary derivatives source.
+Keep DeFiLlama and protocol-native connectors as the primary DeFi/protocol source.
+Use CoinGecko to improve:
+1. canonical asset mapping
+2. spot price history
+3. market cap / volume context
+4. token metadata enrichment
+5. global market overview cards
+6. internal API usage monitoring
+
+Implementation requirements:
+
+1) Environment variables
+Add support for:
+- COINGECKO_API_KEY
+- COINGECKO_BASE_URL
+
+Defaults:
+- COINGECKO_BASE_URL should default to https://pro-api.coingecko.com/api/v3
+
+Use backend-only requests.
+Pass the API key via the x-cg-pro-api-key header.
+Do not expose the API key to the frontend.
+
+2) Build a CoinGecko client
+Create a reusable backend client with:
+- typed request/response models where practical
+- timeout handling
+- retry logic with backoff for transient failures
+- structured logging
+- graceful handling of rate limit / auth errors
+- helper methods for:
+  - ping / health check
+  - /coins/list
+  - /coins/markets
+  - /coins/{id}/market_chart
+  - /coins/{id}/market_chart/range
+  - /global
+  - /onchain/networks/{network}/tokens/multi/{addresses}
+  - /key
+
+3) Database design
+Add the minimum new tables needed for an MVP-quality integration.
+
+Suggested tables:
+- asset_reference_map
+  - symbol
+  - canonical_symbol
+  - coingecko_id
+  - name
+  - asset_type
+  - chain
+  - contract_address
+  - source_name
+  - raw
+- market_reference_snapshot
+  - ts
+  - coingecko_id
+  - symbol
+  - current_price_usd
+  - market_cap_usd
+  - fully_diluted_valuation_usd
+  - volume_24h_usd
+  - circulating_supply
+  - total_supply
+  - max_supply
+  - price_change_24h_pct
+  - source_name
+  - raw
+- market_reference_history
+  - ts
+  - coingecko_id
+  - price_usd
+  - market_cap_usd
+  - volume_24h_usd
+  - source_name
+  - raw
+- api_usage_snapshot
+  - ts
+  - provider
+  - rate_limit
+  - remaining_credits
+  - monthly_total_credits
+  - raw
+
+Preserve raw payloads in JSON columns.
+Keep schema naming consistent with the existing repo style.
+
+4) Ingestion jobs
+Implement jobs for:
+- daily / ad hoc asset discovery and mapping refresh from /coins/list
+- periodic market reference snapshots from /coins/markets for our tracked assets
+- historical backfill from /coins/{id}/market_chart or /market_chart/range
+- periodic API usage snapshots from /key
+- optional token enrichment by contract address for wrapper/LST/stablecoin assets
+
+Tracked assets for MVP:
+- BTC family
+- ETH family
+- SOL family
+- major USD stablecoin family
+- key wrappers / LSTs relevant to Yield OS
+
+5) API endpoints
+Add these endpoints:
+- GET /api/reference/assets
+- GET /api/reference/assets/{symbol}
+- GET /api/reference/history/{symbol}
+- GET /api/reference/global
+- GET /api/reference/usage
+
+Behavior:
+- /api/reference/assets returns current market reference data for tracked assets
+- /api/reference/assets/{symbol} returns canonical asset metadata and current reference metrics
+- /api/reference/history/{symbol} returns historical price / market cap / 24h volume time series
+- /api/reference/global returns high-level crypto market context
+- /api/reference/usage returns CoinGecko API usage/health information
+
+6) Frontend integration
+Integrate CoinGecko data into the app only where it materially improves decision-making.
+
+Use cases:
+- asset cockpit:
+  - show CoinGecko spot price history
+  - show market cap and 24h volume context
+  - show canonical asset metadata / images if appropriate
+- market overview:
+  - add global market context card
+  - optionally add top market-cap context for tracked assets
+- route / quote logic:
+  - use CoinGecko only as a reference pricing and metadata layer
+  - do not replace protocol-native liquidity / cap / collateral / borrow logic
+
+7) Product constraints
+- Do not replace Velo for derivatives.
+- Do not replace Aave / Morpho / Kamino / protocol-native data for LTVs, caps, or quote-critical borrowing constraints.
+- Do not expose the CoinGecko API key to the browser.
+- Do not add unnecessary abstraction.
+- Keep implementation MVP-simple and maintainable.
+- Preserve source labels and freshness timestamps in UI.
+- Mark CoinGecko as source_name = 'coingecko'.
+
+8) Quality requirements
+- add tests with mocked CoinGecko responses
+- add migration(s) for new tables
+- add repository/service separation consistent with repo conventions
+- include a short README update describing:
+  - env vars
+  - endpoints
+  - ingestion jobs
+  - intended use of CoinGecko in Yield OS
+
+9) Git workflow
+Follow docs/GIT_WORKFLOW.md.
+When complete:
+- stage only relevant files
+- create a conventional commit
+- include Task / Files / Reason / Tests in the commit body
+- report the commit hash
+
+Deliver:
+1. exact files changed
+2. migrations added
+3. new env vars
+4. new endpoints
+5. tests added
+6. concise explanation of design choices
+
+Important product judgment:
+CoinGecko should serve as the app’s canonical market reference + asset metadata layer.
+It should improve asset normalization, historical spot context, and market-cap/volume context.
+It should not become the source of truth for protocol-level yield, lending risk, or derivatives routing.
+
+## Prompt 12 — dated futures basis curve
+Read docs/PROJECT_BRIEF.md, docs/DATA_DICTIONARY.md, docs/SOURCE_MAP.md,
+and docs/OTHER_WORKSPACE_BRIEF.md first.
+
+docs/OTHER_WORKSPACE_BRIEF.md documents the internal reference codebase.
+Use it for all data access patterns. Do not edit anything under
+/home/ec2-user/workspace/.
+
+Implement a dated futures basis dashboard as a new page at
+apps/web/app/basis/page.tsx backed by a new FastAPI router at
+apps/api/app/routers/basis.py.
+
+---
+
+## Data layer — what to wire up vs. what to build fresh
+
+### Deribit (reference repo — inject via sys.path)
+
+The following functions in the reference repo are ready to use:
+
+  /home/ec2-user/workspace/exodus/api_wrappers/ad_derivs_funcs.py
+
+  get_listed_basis_history(ccy, expiry_date, lookback_days=89)
+    - Returns hourly time-series for one Deribit expiry
+    - Fields: timestamp (index), basis_USD, basis_%_term, basis_%_annualized,
+              daysToExpiration, underlyingPrice, indexPrice, openInterest
+    - Hard limit: lookback_days must be < 90 (endpoint uses hourly timeInterval)
+    - Requires AD_DERIVS_KEY from AWS Secrets Manager:
+        get_secret("amberdata")["api_key"]
+
+  get_intraday_basis_run(ccy, expiry_str)
+    - Last 11 hours, minutely. Fields: basis_usd, basis_pct_ann, indexPrice,
+      underlyingPrice, openInterest, expirationTimestamp, daysToExpiration
+
+  To get all active Deribit expiries for a currency, call the Amberdata
+  delta surfaces endpoint that ad_derivs_funcs already uses, or adapt
+  get_ad_listed_expiry_term_structure() to extract expiry dates.
+
+  Build a wrapper that fetches all active Deribit expiries concurrently
+  (ThreadPoolExecutor, pattern already in vol_term_structure_run()) and
+  returns the full term structure snapshot.
+
+### Binance / OKX / Bybit / CME dated futures (build fresh)
+
+These are NOT in the reference repo. Build direct REST connectors:
+
+  Binance dated futures (USDT-margined):
+    Enumerate active dated contracts:
+      GET https://fapi.binance.com/fapi/v1/exchangeInfo
+      Filter: contractType in ['CURRENT_QUARTER', 'NEXT_QUARTER']
+    Mark price (contains basis components):
+      GET https://fapi.binance.com/fapi/v1/premiumIndex?symbol=BTCUSDT_250328
+      Fields: symbol, markPrice, indexPrice, lastFundingRate, nextFundingTime
+    OHLCV: GET https://fapi.binance.com/fapi/v1/klines?symbol=BTCUSDT_250328&interval=1d
+    Open interest: GET https://fapi.binance.com/fapi/v1/openInterest?symbol=BTCUSDT_250328
+    24h volume: GET https://fapi.binance.com/fapi/v1/ticker/24hr?symbol=BTCUSDT_250328
+
+  OKX dated futures:
+    Enumerate active contracts:
+      GET https://www.okx.com/api/v5/public/instruments?instType=FUTURES
+      Filter: state=live, ctType=linear, quoteCcy=USDT
+    Mark price:
+      GET https://www.okx.com/api/v5/public/mark-price?instId=BTC-USDT-250328&instType=FUTURES
+    OHLCV: GET https://www.okx.com/api/v5/market/candles?instId=BTC-USDT-250328&bar=1D
+    Open interest: GET https://www.okx.com/api/v5/public/open-interest?instId=BTC-USDT-250328
+    24h ticker: GET https://www.okx.com/api/v5/market/ticker?instId=BTC-USDT-250328
+
+  Bybit dated futures:
+    Enumerate: GET https://api.bybit.com/v5/market/instruments-info?category=linear
+    Filter: contractType=LinearFutures, status=Trading
+    Ticker (mark price, index, OI, volume):
+      GET https://api.bybit.com/v5/market/tickers?category=linear&symbol=BTCUSDT-28MAR25
+
+  CME Bitcoin futures (attempt with existing Amberdata key first):
+    GET https://api.amberdata.com/markets/futures/ohlcv/BTCUSD_250328
+        ?exchange=cme&timeInterval=days
+    Headers: x-api-key: <amberdata_derivs key>
+    If the key lacks CME data subscription, log a warning and return empty
+    rather than failing. CME is lower priority — do not block other venues.
+
+---
+
+## Basis calculation (consistent formula across all venues)
+
+  index_price = spot index price (not mark price)
+  futures_price = mark price of the dated futures contract
+  days_to_expiry = (expiry_datetime - now).days  (floor to 0 minimum)
+
+  basis_usd       = futures_price - index_price
+  basis_pct_term  = basis_usd / index_price
+  basis_pct_ann   = basis_pct_term * (365 / days_to_expiry)   # undefined if DTE <= 0
+
+All annualized basis values stored and returned as decimals (0.05 = 5%).
+
+---
+
+## Backend — GET /api/basis/snapshot?symbol=BTC
+
+Response shape:
+{
+  "symbol": "BTC",
+  "as_of": "<ISO timestamp>",
+  "term_structure": [
+    {
+      "venue": "deribit" | "binance" | "okx" | "bybit" | "cme",
+      "contract": "BTC-28MAR25",
+      "expiry": "2025-03-28T08:00:00Z",
+      "days_to_expiry": 14,
+      "futures_price": 85000.0,
+      "index_price": 84000.0,
+      "basis_usd": 1000.0,
+      "basis_pct_ann": 0.158,
+      "oi_coin": 12500.0,
+      "oi_usd": 1050000000.0,
+      "volume_24h_usd": 450000000.0
+    },
+    ...
+  ]
+}
+
+Sort by days_to_expiry ascending. Include all venues and expiries.
+Perpétuals (DTE = null / infinite) are excluded from this endpoint —
+they belong in the funding snapshot endpoint already built.
+
+---
+
+## Backend — GET /api/basis/history?symbol=BTC&venue=deribit&contract=BTC-28MAR25&days=89
+
+Response shape:
+{
+  "symbol": "BTC",
+  "venue": "deribit",
+  "contract": "BTC-28MAR25",
+  "expiry": "2025-03-28T08:00:00Z",
+  "series": [
+    { "timestamp": "...", "basis_usd": float, "basis_pct_ann": float,
+      "futures_price": float, "index_price": float, "days_to_expiry": float }
+  ]
+}
+
+For Deribit: use get_listed_basis_history() from reference repo (max 89 days).
+For other venues: construct from daily OHLCV klines. Use close price as futures_price.
+Index price for Binance: fetch from premiumIndex endpoint at each candle timestamp
+  (note: this is not stored in kline data — use a daily snapshot approach).
+
+---
+
+## Frontend — apps/web/app/basis/page.tsx
+
+Section 1 — Basis Term Structure Chart (primary)
+- X-axis: days to expiry (0 to max DTE)
+- Y-axis: annualized basis %
+- One plotted point per active contract, one series per venue
+- Hover tooltip: contract name, expiry date, basis USD, OI USD, 24h volume
+- Separate series per venue with distinct colors
+- Use ECharts scatter + line chart
+
+Section 2 — Basis Snapshot Table
+Columns: Venue | Contract | Expiry | DTE | Futures Price | Index Price |
+         Basis USD | Basis Ann % | OI (USD) | 24h Volume (USD)
+Sort: DTE ascending, then venue
+Color-code Basis Ann %: gradient from blue (low) to red (high)
+
+Section 3 — Historical Basis Chart (selected contract)
+- Click a row in the snapshot table to load history for that contract
+- Time-series of basis_pct_ann over available history
+- Source: GET /api/basis/history
+
+Section 4 — Controls
+- Symbol selector (BTC, ETH default)
+- Venue checkboxes (Deribit, Binance, OKX, Bybit, CME)
+- Toggle: show in USD basis vs. annualized %
+
+---
+
+## Constraints
+- All new files go exclusively inside /home/ec2-user/cdb_workspace/yield-os/
+- Never write to /home/ec2-user/workspace/ under any circumstance
+- Import reference repo functions via sys.path injection only
+- If CME Amberdata subscription is unavailable, log a warning and omit CME
+  from the response — do not throw a 500 error
+- DTE = 0 or negative: exclude from term structure (contract has expired)
+- Add tests with all exchange REST calls mocked
+- Keep consistent with the connector patterns already established
