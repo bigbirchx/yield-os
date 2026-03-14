@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
-from app.routers import derivatives, health
+from app.routers import derivatives, health, lending
 
 structlog.configure(
     wrapper_class=structlog.make_filtering_bound_logger(
@@ -32,6 +32,7 @@ app.add_middleware(
 
 app.include_router(health.router)
 app.include_router(derivatives.router)
+app.include_router(lending.router)
 
 _scheduler: AsyncIOScheduler | None = None
 
@@ -40,12 +41,10 @@ _scheduler: AsyncIOScheduler | None = None
 async def on_startup() -> None:
     log.info("api_starting", env=settings.app_env)
 
-    if settings.velo_api_key:
-        from app.core.database import AsyncSessionLocal
-        from app.services.velo_ingestion import ingest_all
+    global _scheduler
+    _scheduler = AsyncIOScheduler()
 
-        global _scheduler
-        _scheduler = AsyncIOScheduler()
+    if settings.velo_api_key:
         _scheduler.add_job(
             _velo_job,
             trigger=IntervalTrigger(seconds=300),
@@ -53,10 +52,21 @@ async def on_startup() -> None:
             replace_existing=True,
             misfire_grace_time=60,
         )
-        _scheduler.start()
-        log.info("velo_scheduler_started")
+        log.info("velo_scheduler_registered")
     else:
         log.warning("velo_scheduler_skipped", reason="VELO_API_KEY not set")
+
+    # DeFiLlama is public; schedule regardless of API key
+    _scheduler.add_job(
+        _defillama_job,
+        trigger=IntervalTrigger(seconds=900),  # 15 min
+        id="defillama_ingestion",
+        replace_existing=True,
+        misfire_grace_time=120,
+    )
+    log.info("defillama_scheduler_registered")
+
+    _scheduler.start()
 
 
 async def _velo_job() -> None:
@@ -66,6 +76,15 @@ async def _velo_job() -> None:
     async with AsyncSessionLocal() as db:
         counts = await ingest_all(db)
     log.info("velo_scheduled_run", counts=counts)
+
+
+async def _defillama_job() -> None:
+    from app.core.database import AsyncSessionLocal
+    from app.services.defillama_ingestion import ingest_all
+
+    async with AsyncSessionLocal() as db:
+        counts = await ingest_all(db)
+    log.info("defillama_scheduled_run", counts=counts)
 
 
 @app.on_event("shutdown")

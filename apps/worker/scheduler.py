@@ -4,23 +4,24 @@ APScheduler setup for Yield Cockpit ingestion jobs.
 Run directly:
     python -m apps.worker.scheduler
 
-Or import `scheduler` and call start() / shutdown() from a FastAPI lifespan.
+Or import build_scheduler() and call start() / shutdown() from a FastAPI lifespan.
 """
 
 from __future__ import annotations
 
 import asyncio
-import sys
 
 import structlog
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
+from apps.worker.jobs.defillama_jobs import run_defillama_ingestion
 from apps.worker.jobs.velo_jobs import run_velo_ingestion
 
 log = structlog.get_logger(__name__)
 
-VELO_INTERVAL_SECONDS = 300  # 5 minutes
+VELO_INTERVAL_SECONDS = 300       # 5 minutes
+DEFILLAMA_INTERVAL_SECONDS = 900  # 15 minutes
 
 
 def build_scheduler() -> AsyncIOScheduler:
@@ -33,6 +34,14 @@ def build_scheduler() -> AsyncIOScheduler:
         replace_existing=True,
         misfire_grace_time=60,
     )
+    scheduler.add_job(
+        run_defillama_ingestion,
+        trigger=IntervalTrigger(seconds=DEFILLAMA_INTERVAL_SECONDS),
+        id="defillama_ingestion",
+        name="DeFiLlama lending + staking ingestion",
+        replace_existing=True,
+        misfire_grace_time=120,
+    )
     return scheduler
 
 
@@ -41,9 +50,9 @@ async def _run() -> None:
     scheduler.start()
     log.info("worker_scheduler_started", jobs=[j.id for j in scheduler.get_jobs()])
     try:
-        # Run the first ingestion immediately on startup
+        # Fire both jobs immediately on startup before settling into schedule
         await run_velo_ingestion()
-        # Then keep running indefinitely
+        await run_defillama_ingestion()
         while True:
             await asyncio.sleep(60)
     except (KeyboardInterrupt, SystemExit):
