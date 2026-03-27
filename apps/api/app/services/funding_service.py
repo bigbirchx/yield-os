@@ -58,6 +58,7 @@ class ExchangeData:
     oi_coin: float | None = None
     oi_usd: float | None = None
     volume_coin_24h: float | None = None
+    volume_usd_24h: float | None = None
     ma_7d_apr: float | None = None
     ma_30d_apr: float | None = None
 
@@ -425,13 +426,28 @@ async def _fetch_binance(symbol: str) -> ExchangeData:
                 pass
         try:
             async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as c:
-                r = await c.get(
+                # Fetch 24h ticker: gives OI in coin, mark price, and quote volume
+                r_t = await c.get(
+                    "https://fapi.binance.com/fapi/v1/ticker/24hr",
+                    params={"symbol": f"{symbol}USDT"},
+                )
+                r_t.raise_for_status()
+                t = r_t.json()
+                # Also fetch current OI separately (24hr ticker doesn't include OI)
+                r_oi = await c.get(
                     "https://fapi.binance.com/fapi/v1/openInterest",
                     params={"symbol": f"{symbol}USDT"},
                 )
-                r.raise_for_status()
-                oi_coin = _safe_float(r.json().get("openInterest"))
-                return {"perpetual_open_interest": oi_coin}
+                r_oi.raise_for_status()
+                oi_coin = _safe_float(r_oi.json().get("openInterest"))
+                last_price = _safe_float(t.get("lastPrice"))
+                oi_usd = (oi_coin * last_price) if (oi_coin and last_price) else None
+                vol_usd = _safe_float(t.get("quoteVolume"))  # 24h USDT volume
+                return {
+                    "perpetual_open_interest": oi_coin,
+                    "perpetual_open_interest_USD": oi_usd,
+                    "perpetual_volume_usd_24h": vol_usd,
+                }
         except Exception:
             return {}
 
@@ -444,6 +460,7 @@ async def _fetch_binance(symbol: str) -> ExchangeData:
     d.oi_usd = _safe_float(m.get("perpetual_open_interest_USD"))
     d.oi_coin = _safe_float(m.get("perpetual_open_interest"))
     d.volume_coin_24h = _safe_float(m.get("perpetual_volume_24h"))
+    d.volume_usd_24h = _safe_float(m.get("perpetual_volume_usd_24h"))
     d.ma_7d_apr = _compute_ma(hist, 7)
     d.ma_30d_apr = _compute_ma(hist, 30)
     return d
@@ -473,7 +490,8 @@ async def _fetch_okx(symbol: str) -> ExchangeData:
             return None
         return None
 
-    async def _oi() -> dict:
+    async def _oi_vol() -> dict:
+        out: dict = {}
         try:
             async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as c:
                 r = await c.get(
@@ -483,22 +501,40 @@ async def _fetch_okx(symbol: str) -> ExchangeData:
                 r.raise_for_status()
                 items = r.json().get("data", [])
                 if items:
-                    return {
-                        "oi_coin": _safe_float(items[0].get("oiCcy")),
-                        "oi_usd": _safe_float(items[0].get("oiUsd")),
-                    }
+                    out["oi_coin"] = _safe_float(items[0].get("oiCcy"))
+                    out["oi_usd"] = _safe_float(items[0].get("oiUsd"))
         except Exception:
             pass
-        return {}
+        try:
+            async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as c:
+                r = await c.get(
+                    "https://www.okx.com/api/v5/market/ticker",
+                    params={"instId": f"{symbol}-USDT-SWAP"},
+                )
+                r.raise_for_status()
+                items = r.json().get("data", [])
+                if items:
+                    t = items[0]
+                    # volCcy24h = base-asset (BTC) volume for linear USDT-SWAP.
+                    # Multiply by last price to convert to approximate USD volume
+                    # so it is comparable to Binance/Bybit USDT-turnover figures.
+                    vol_base = _safe_float(t.get("volCcy24h"))
+                    price = _safe_float(t.get("last"))
+                    if vol_base and price:
+                        out["vol_usd_24h"] = vol_base * price
+        except Exception:
+            pass
+        return out
 
     live, oi_data, hist = await asyncio.gather(
-        _live(), _oi(), _mongo_history(symbol, "okx", 90)
+        _live(), _oi_vol(), _mongo_history(symbol, "okx", 90)
     )
     d.live_apr = _safe_float(live)
     d.last_apr = _last_apr(hist)
     d.funding_interval_hours = _funding_interval(hist)
     d.oi_coin = oi_data.get("oi_coin")
     d.oi_usd = oi_data.get("oi_usd")
+    d.volume_usd_24h = oi_data.get("vol_usd_24h")
     d.ma_7d_apr = _compute_ma(hist, 7)
     d.ma_30d_apr = _compute_ma(hist, 30)
     return d
@@ -524,6 +560,8 @@ async def _fetch_bybit(symbol: str) -> ExchangeData:
                         "live_apr": raw * _ANNUALIZE_8H if raw is not None else None,
                         "oi_coin": _safe_float(t.get("openInterest")),
                         "oi_usd": _safe_float(t.get("openInterestValue")),
+                        "vol_coin_24h": _safe_float(t.get("volume24h")),
+                        "vol_usd_24h": _safe_float(t.get("turnover24h")),
                     }
         except Exception:
             pass
@@ -556,6 +594,8 @@ async def _fetch_bybit(symbol: str) -> ExchangeData:
     d.funding_interval_hours = _funding_interval(hist)
     d.oi_coin = ticker.get("oi_coin")
     d.oi_usd = ticker.get("oi_usd")
+    d.volume_coin_24h = ticker.get("vol_coin_24h")
+    d.volume_usd_24h = ticker.get("vol_usd_24h")
     d.ma_7d_apr = _compute_ma(hist, 7)
     d.ma_30d_apr = _compute_ma(hist, 30)
     return d
@@ -694,7 +734,12 @@ def _blend(exchanges: dict[str, ExchangeData]) -> dict[str, float | None]:
         tot = sum(w for _, w in oi_pairs)
         oi_w = sum(r * w for r, w in oi_pairs) / tot if tot else None
 
-    vol_pairs = [(live[k], exchanges[k].volume_coin_24h) for k in live if exchanges[k].volume_coin_24h]
+    # Prefer USD volume; fall back to coin volume where USD is unavailable
+    vol_pairs = [
+        (live[k], exchanges[k].volume_usd_24h or exchanges[k].volume_coin_24h)
+        for k in live
+        if (exchanges[k].volume_usd_24h or exchanges[k].volume_coin_24h)
+    ]
     vol_w: float | None = None
     if vol_pairs:
         tot = sum(w for _, w in vol_pairs)
@@ -799,34 +844,310 @@ async def get_funding_history(
     return df
 
 
+# ---------------------------------------------------------------------------
+# Historical OI + Volume fetchers (for weighted blended series)
+# ---------------------------------------------------------------------------
+
+async def _binance_oi_history(symbol: str, days: int) -> pd.Series:
+    """Binance daily open-interest history (USD). Paginates up to 5 pages × 500."""
+    cutoff_ms = int((pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=days)).timestamp() * 1000)
+    start_ms = cutoff_ms
+    all_records: list[dict] = []
+    try:
+        async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as c:
+            for _ in range(5):
+                r = await c.get(
+                    "https://fapi.binance.com/futures/data/openInterestHist",
+                    params={"symbol": f"{symbol}USDT", "period": "1d",
+                            "startTime": start_ms, "limit": 500},
+                )
+                r.raise_for_status()
+                page = r.json()
+                if not page:
+                    break
+                all_records.extend(page)
+                if len(page) < 500:
+                    break
+                start_ms = int(page[-1]["timestamp"]) + 1
+        if not all_records:
+            return pd.Series(dtype=float, name="oi_usd")
+        df = pd.DataFrame(all_records)
+        idx = pd.to_datetime(df["timestamp"].astype(int), unit="ms", utc=True).dt.normalize()
+        return pd.Series(df["sumOpenInterestValue"].astype(float).values, index=idx, name="oi_usd")
+    except Exception:
+        log.exception("binance_oi_history_error", symbol=symbol)
+        return pd.Series(dtype=float, name="oi_usd")
+
+
+async def _binance_vol_history(symbol: str, days: int) -> pd.Series:
+    """Binance daily USDT-volume history (from klines quoteAssetVolume). Paginates."""
+    cutoff_ms = int((pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=days)).timestamp() * 1000)
+    start_ms = cutoff_ms
+    all_records: list[list] = []
+    try:
+        async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as c:
+            for _ in range(5):
+                r = await c.get(
+                    "https://fapi.binance.com/fapi/v1/klines",
+                    params={"symbol": f"{symbol}USDT", "interval": "1d",
+                            "startTime": start_ms, "limit": 1500},
+                )
+                r.raise_for_status()
+                page = r.json()
+                if not page:
+                    break
+                all_records.extend(page)
+                if len(page) < 1500:
+                    break
+                start_ms = int(page[-1][0]) + 1
+        if not all_records:
+            return pd.Series(dtype=float, name="vol_usd")
+        df = pd.DataFrame(all_records)
+        # col 0 = openTime ms, col 7 = quoteAssetVolume (USDT)
+        idx = pd.to_datetime(df[0].astype(int), unit="ms", utc=True).dt.normalize()
+        return pd.Series(df[7].astype(float).values, index=idx, name="vol_usd")
+    except Exception:
+        log.exception("binance_vol_history_error", symbol=symbol)
+        return pd.Series(dtype=float, name="vol_usd")
+
+
+async def _bybit_oi_history(symbol: str, days: int) -> pd.Series:
+    """Bybit daily OI (USD) history. Converts base-asset OI using daily close price."""
+    cutoff_ms = int((pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=days)).timestamp() * 1000)
+    now_ms = int(pd.Timestamp.now(tz="UTC").timestamp() * 1000)
+
+    async def _fetch_oi() -> list[dict]:
+        records: list[dict] = []
+        end_ms = now_ms
+        try:
+            async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as c:
+                for _ in range(10):
+                    r = await c.get(
+                        "https://api.bybit.com/v5/market/open-interest",
+                        params={"category": "linear", "symbol": f"{symbol}USDT",
+                                "intervalTime": "1d", "startTime": cutoff_ms,
+                                "endTime": end_ms, "limit": 200},
+                    )
+                    r.raise_for_status()
+                    page = r.json().get("result", {}).get("list", [])
+                    if not page:
+                        break
+                    records.extend(page)
+                    if len(page) < 200:
+                        break
+                    end_ms = min(int(d["timestamp"]) for d in page) - 1
+                    if end_ms < cutoff_ms:
+                        break
+        except Exception:
+            log.exception("bybit_oi_history_error", symbol=symbol)
+        return records
+
+    async def _fetch_prices() -> dict[pd.Timestamp, float]:
+        """Daily close prices to convert OI from base coin → USD."""
+        prices: dict[pd.Timestamp, float] = {}
+        end_ms = now_ms
+        try:
+            async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as c:
+                for _ in range(10):
+                    r = await c.get(
+                        "https://api.bybit.com/v5/market/kline",
+                        params={"category": "linear", "symbol": f"{symbol}USDT",
+                                "interval": "D", "startTime": cutoff_ms,
+                                "endTime": end_ms, "limit": 200},
+                    )
+                    r.raise_for_status()
+                    page = r.json().get("result", {}).get("list", [])
+                    if not page:
+                        break
+                    for row in page:
+                        ts = pd.to_datetime(int(row[0]), unit="ms", utc=True).normalize()
+                        prices[ts] = float(row[4])  # close price
+                    if len(page) < 200:
+                        break
+                    end_ms = min(int(row[0]) for row in page) - 1
+                    if end_ms < cutoff_ms:
+                        break
+        except Exception:
+            log.exception("bybit_price_history_error", symbol=symbol)
+        return prices
+
+    oi_records, prices = await asyncio.gather(_fetch_oi(), _fetch_prices())
+    if not oi_records:
+        return pd.Series(dtype=float, name="oi_usd")
+
+    records = []
+    for item in oi_records:
+        ts = pd.to_datetime(int(item["timestamp"]), unit="ms", utc=True).normalize()
+        oi_coin = _safe_float(item.get("openInterest"))
+        if oi_coin is None:
+            continue
+        price = prices.get(ts)
+        oi_usd = oi_coin * price if price else None
+        if oi_usd is not None:
+            records.append((ts, oi_usd))
+
+    if not records:
+        return pd.Series(dtype=float, name="oi_usd")
+    dates, values = zip(*records)
+    return pd.Series(list(values), index=pd.DatetimeIndex(list(dates)), name="oi_usd")
+
+
+async def _bybit_vol_history(symbol: str, days: int) -> pd.Series:
+    """Bybit daily USDT-volume history (turnover from klines)."""
+    cutoff_ms = int((pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=days)).timestamp() * 1000)
+    now_ms = int(pd.Timestamp.now(tz="UTC").timestamp() * 1000)
+    all_records: list[list] = []
+    try:
+        end_ms = now_ms
+        async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as c:
+            for _ in range(10):
+                r = await c.get(
+                    "https://api.bybit.com/v5/market/kline",
+                    params={"category": "linear", "symbol": f"{symbol}USDT",
+                            "interval": "D", "startTime": cutoff_ms,
+                            "endTime": end_ms, "limit": 200},
+                )
+                r.raise_for_status()
+                page = r.json().get("result", {}).get("list", [])
+                if not page:
+                    break
+                all_records.extend(page)
+                if len(page) < 200:
+                    break
+                end_ms = min(int(row[0]) for row in page) - 1
+                if end_ms < cutoff_ms:
+                    break
+        if not all_records:
+            return pd.Series(dtype=float, name="vol_usd")
+        # col 0 = startTime ms, col 6 = turnover (USDT)
+        df = pd.DataFrame(all_records)
+        idx = pd.to_datetime(df[0].astype(int), unit="ms", utc=True).dt.normalize()
+        return pd.Series(df[6].astype(float).values, index=idx, name="vol_usd")
+    except Exception:
+        log.exception("bybit_vol_history_error", symbol=symbol)
+        return pd.Series(dtype=float, name="vol_usd")
+
+
+def _weighted_blend(
+    rates: pd.DataFrame,
+    weights: dict[str, pd.Series],
+) -> pd.Series:
+    """
+    Compute a daily weighted-average rate series.
+
+    For each day, only exchanges that have BOTH a rate AND a positive weight
+    contribute.  If no weight data is available for a given day, that day is
+    NaN in the output (the caller should fall back to equal-weighted).
+    """
+    result_idx: list = []
+    result_vals: list[float] = []
+
+    for date in rates.index:
+        norm = date.normalize()
+        num = denom = 0.0
+        for exch in rates.columns:
+            rate = rates.at[date, exch]
+            if pd.isna(rate):
+                continue
+            ws = weights.get(str(exch))
+            if ws is None or ws.empty:
+                continue
+            # Align weight index to UTC-normalised dates
+            ws_idx = ws.index
+            if ws_idx.tz is None:
+                ws_idx = ws_idx.tz_localize("UTC")
+            ws_norm = pd.Series(ws.values, index=ws_idx.normalize())
+            if norm in ws_norm.index:
+                w = float(ws_norm[norm])
+            else:
+                prior = ws_norm.index[ws_norm.index <= norm]
+                if len(prior) == 0:
+                    continue
+                w = float(ws_norm[prior[-1]])
+            if pd.isna(w) or w <= 0:
+                continue
+            num += rate * w
+            denom += w
+        if denom > 0:
+            result_idx.append(date)
+            result_vals.append(num / denom)
+
+    if not result_idx:
+        return pd.Series(dtype=float)
+    return pd.Series(result_vals, index=pd.DatetimeIndex(result_idx))
+
+
 async def get_blended_history(
     symbol: str,
     days: int = 365,
     warmup_days: int = 0,
 ) -> dict[str, list[dict]]:
-    """Fetch all available exchange histories and compute blended daily series."""
+    """
+    Fetch all available exchange histories and compute three blended daily series:
+
+    equal_weighted  — simple row-mean across exchanges with data on that day
+    oi_weighted     — weighted by each exchange's open interest (USD) on that day
+                      Sources: Binance openInterestHist, Bybit open-interest API
+                      OKX excluded if its OI history endpoint is unavailable
+    volume_weighted — weighted by each exchange's perpetual-pair 24h USDT volume
+                      Sources: Binance klines quoteAssetVolume, Bybit klines turnover
+    """
     sym = symbol.upper()
     fetch_days = days + warmup_days
-    hists = await asyncio.gather(
+
+    results = await asyncio.gather(
         _mongo_history(sym, "binance", fetch_days),
         _mongo_history(sym, "okx", fetch_days),
         get_funding_history(sym, "bybit", fetch_days),
         get_funding_history(sym, "deribit", fetch_days),
+        _binance_oi_history(sym, fetch_days),
+        _binance_vol_history(sym, fetch_days),
+        _bybit_oi_history(sym, fetch_days),
+        _bybit_vol_history(sym, fetch_days),
         return_exceptions=True,
     )
-    labels = ("binance", "okx", "bybit", "deribit")
-    daily: dict[str, pd.Series] = {}
-    for label, h in zip(labels, hists):
-        if isinstance(h, pd.DataFrame) and not h.empty and "annualized_funding_rate" in h.columns:
-            daily[label] = h["annualized_funding_rate"].resample("D").mean()
 
-    if not daily:
+    def _ok_df(v: Any) -> pd.DataFrame:
+        return pd.DataFrame() if isinstance(v, (Exception, type(None))) else v
+
+    def _ok_s(v: Any) -> pd.Series:
+        return pd.Series(dtype=float) if isinstance(v, (Exception, type(None))) else v
+
+    # ── Funding rate daily series ────────────────────────────────────────────
+    labels = ("binance", "okx", "bybit", "deribit")
+    daily_rates: dict[str, pd.Series] = {}
+    for label, raw in zip(labels, results[:4]):
+        h = _ok_df(raw)
+        if not h.empty and "annualized_funding_rate" in h.columns:
+            daily_rates[label] = h["annualized_funding_rate"].resample("D").mean()
+
+    if not daily_rates:
         return {"equal_weighted": [], "oi_weighted": [], "volume_weighted": []}
 
-    combined = pd.DataFrame(daily).dropna(how="all")
+    combined = pd.DataFrame(daily_rates).dropna(how="all")
     equal = combined.mean(axis=1)
+
+    # ── OI and volume weight series ──────────────────────────────────────────
+    oi_binance  = _ok_s(results[4])
+    vol_binance = _ok_s(results[5])
+    oi_bybit    = _ok_s(results[6])
+    vol_bybit   = _ok_s(results[7])
+
+    oi_weights  = {k: v for k, v in [("binance", oi_binance),  ("bybit", oi_bybit)]  if not v.empty}
+    vol_weights = {k: v for k, v in [("binance", vol_binance), ("bybit", vol_bybit)] if not v.empty}
+
+    oi_blend  = _weighted_blend(combined, oi_weights)  if oi_weights  else pd.Series(dtype=float)
+    vol_blend = _weighted_blend(combined, vol_weights) if vol_weights else pd.Series(dtype=float)
 
     def _ser(s: pd.Series) -> list[dict]:
         return [{"date": d.strftime("%Y-%m-%d"), "value": float(v)} for d, v in s.dropna().items()]
 
-    return {"equal_weighted": _ser(equal), "oi_weighted": _ser(equal), "volume_weighted": _ser(equal)}
+    # Fall back to equal-weighted where the weighted blend has no data
+    oi_out  = oi_blend  if not oi_blend.empty  else equal
+    vol_out = vol_blend if not vol_blend.empty else equal
+
+    return {
+        "equal_weighted":  _ser(equal),
+        "oi_weighted":     _ser(oi_out),
+        "volume_weighted": _ser(vol_out),
+    }

@@ -26,6 +26,7 @@ class ExchangeOut(BaseModel):
     oi_coin: float | None = None
     oi_usd: float | None = None
     volume_coin_24h: float | None = None
+    volume_usd_24h: float | None = None
     ma_7d_apr: float | None = None
     ma_30d_apr: float | None = None
 
@@ -83,6 +84,7 @@ async def funding_snapshot(
                 oi_coin=ex.oi_coin,
                 oi_usd=ex.oi_usd,
                 volume_coin_24h=ex.volume_coin_24h,
+                volume_usd_24h=ex.volume_usd_24h,
                 ma_7d_apr=ex.ma_7d_apr,
                 ma_30d_apr=ex.ma_30d_apr,
             )

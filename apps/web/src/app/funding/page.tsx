@@ -27,6 +27,7 @@ interface ExchangeSnap {
   oi_coin: number | null;
   oi_usd: number | null;
   volume_coin_24h: number | null;
+  volume_usd_24h: number | null;
   ma_7d_apr: number | null;
   ma_30d_apr: number | null;
 }
@@ -330,7 +331,7 @@ function SnapshotTable({
             <th>OI (USD)</th>
             <th>OI (Coin)</th>
             <th>Interval (h)</th>
-            <th>Vol 24h</th>
+            <th>Vol 24h (USD)</th>
           </tr>
         </thead>
         <tbody>
@@ -353,7 +354,7 @@ function SnapshotTable({
               <td>{fmtUsd(data.oi_usd)}</td>
               <td>{fmtCoin(data.oi_coin, symbol)}</td>
               <td>{data.funding_interval_hours ?? "—"}</td>
-              <td>{fmtCoin(data.volume_coin_24h, symbol)}</td>
+              <td>{data.volume_usd_24h != null ? fmtUsd(data.volume_usd_24h) : fmtCoin(data.volume_coin_24h, symbol)}</td>
             </tr>
           ))}
 
