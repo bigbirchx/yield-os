@@ -182,12 +182,105 @@ function gaussianKDE(values: number[], bw: number) {
     (n * bw * Math.sqrt(2 * Math.PI));
 }
 
+/** Linear-interpolation empirical quantile (matches pandas .quantile default). */
 function percentileOf(sorted: number[], p: number): number {
   if (!sorted.length) return 0;
   const idx = (p / 100) * (sorted.length - 1);
   const lo = Math.floor(idx);
   const hi = Math.ceil(idx);
   return sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo);
+}
+
+function stdDev(vals: number[]): number {
+  if (vals.length < 2) return 0;
+  const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
+  return Math.sqrt(vals.reduce((a, b) => a + (b - mean) ** 2, 0) / (vals.length - 1));
+}
+
+/**
+ * KDE-CDF percentile — matches the analytics_frontend reference implementation:
+ *   1. Evaluate Gaussian KDE at 200 points over [min−2σ, max+2σ]
+ *   2. Normalised cumsum → CDF
+ *   3. Binary-search for the p-th percentile value
+ */
+function kdePercentile(vals: number[], bw: number, p: number): number {
+  if (!vals.length) return 0;
+  const std = stdDev(vals);
+  const lo = Math.min(...vals) - 2 * std;
+  const hi = Math.max(...vals) + 2 * std;
+  const N = 200;
+  const xs = Array.from({ length: N }, (_, i) => lo + (i / (N - 1)) * (hi - lo));
+  const kde = gaussianKDE(vals, bw);
+  const ys = xs.map(kde);
+  const total = ys.reduce((a, b) => a + b, 0);
+  let cum = 0;
+  const target = p / 100;
+  for (let i = 0; i < N; i++) {
+    cum += ys[i] / total;
+    if (cum >= target) return xs[i];
+  }
+  return xs[N - 1];
+}
+
+// ---------------------------------------------------------------------------
+// Instruments reference panel
+// ---------------------------------------------------------------------------
+
+const INSTRUMENT_MAP: Array<{
+  exchange: string;
+  label: string;
+  instrument: string;
+  settlement: string;
+  note?: string;
+}> = [
+  { exchange: "binance", label: "Binance",  instrument: "BTCUSDT (linear perp)",       settlement: "USDT" },
+  { exchange: "okx",     label: "OKX",      instrument: "BTC-USDT-SWAP",               settlement: "USDT" },
+  { exchange: "bybit",   label: "Bybit",    instrument: "BTCUSDT (linear category)",   settlement: "USDT" },
+  { exchange: "deribit", label: "Deribit",  instrument: "BTC-PERPETUAL",               settlement: "USD",  note: "Inverse/coin-margined" },
+  { exchange: "bullish", label: "Bullish",  instrument: "BTC (native perp)",           settlement: "USDT" },
+];
+
+function InstrumentPanel({ symbol }: { symbol: string }) {
+  return (
+    <div className="card" style={{ marginBottom: 0 }}>
+      <div className="card-header">Instruments &amp; Pairs</div>
+      <table className="fn-table" style={{ fontSize: 11 }}>
+        <thead>
+          <tr>
+            <th>Exchange</th>
+            <th>Instrument</th>
+            <th>Settlement</th>
+            <th>Annualisation</th>
+            <th>Notes</th>
+          </tr>
+        </thead>
+        <tbody>
+          {INSTRUMENT_MAP.map(({ exchange, label, instrument, settlement, note }) => {
+            const sym = symbol.toUpperCase();
+            const inst = instrument.replace("BTC", sym);
+            return (
+              <tr key={exchange}>
+                <td className="fn-exch-name">
+                  <span className="fn-dot" style={{ background: EXCHANGE_COLORS[exchange] }} />
+                  {label}
+                </td>
+                <td style={{ fontFamily: "var(--font-mono)" }}>{inst}</td>
+                <td>
+                  <span style={{ color: settlement === "USD" ? "var(--yellow)" : "var(--green)", fontFamily: "var(--font-mono)" }}>
+                    {settlement}
+                  </span>
+                </td>
+                <td style={{ fontFamily: "var(--font-mono)", color: "var(--text-muted)" }}>
+                  rate × 3 × 365
+                </td>
+                <td style={{ color: "var(--text-muted)" }}>{note ?? "—"}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -657,28 +750,29 @@ function DistributionPanel({
     const load = async () => {
       const first = [...selectedExchanges][0];
       if (!first) return;
-      const warmup = Math.max(...maPeriods);
-      // Fetch with warmup so MA values in the display window are fully primed
+
+      // Mirror analytics_frontend: warmup = max(periods) * 2 + 1
+      // This ensures the rolling-MA window is fully primed from the very first
+      // data point in the display range, matching the reference distribution window.
+      const maxPeriod = Math.max(...maPeriods);
+      const warmup = maxPeriod * 2 + 1;
       const data = await fetchHistory(symbol, first, days, false, warmup);
       if (!data?.series?.length) return;
 
-      const displayCutoff = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
       const fullVals = data.series.map((p) => p.value * 100);
 
-      // Compute rolling MAs on full (warmup-included) series
+      // Compute rolling MAs on full (warmup + display) series.
+      // Keep ALL primed values (no display-window trim) — matches the
+      // analytics_frontend which computes distribution over dropna() of the
+      // entire fetch window, not just the last `days` days.
       const maData: Record<string, number[]> = {};
       maPeriods.forEach((period) => {
-        const allMaVals: Array<number | null> = fullVals.map((_, j) => {
-          if (j < period - 1) return null;
+        const primed: number[] = [];
+        for (let j = period - 1; j < fullVals.length; j++) {
           const w = fullVals.slice(j - period + 1, j + 1);
-          return w.reduce((a, b) => a + b, 0) / w.length;
-        });
-        // Trim to display window only (drop warmup prefix)
-        const trimmed = data.series
-          .map((p, j) => ({ date: p.date, ma: allMaVals[j] }))
-          .filter(({ date, ma }) => date >= displayCutoff && ma !== null)
-          .map(({ ma }) => ma as number);
-        maData[`MA${period}`] = trimmed;
+          primed.push(w.reduce((a, b) => a + b, 0) / w.length);
+        }
+        maData[`MA${period}`] = primed;
       });
       setHistData(maData);
     };
@@ -832,34 +926,80 @@ function DistributionPanel({
         <ReactECharts option={boxOption} style={{ height: 220 }} theme="dark" notMerge />
       </div>
 
-      {/* Percentile table */}
-      <table className="fn-table fn-pct-table">
-        <thead>
-          <tr>
-            <th>Series</th>
-            <th>P5</th>
-            <th>P25</th>
-            <th>P50</th>
-            <th>P75</th>
-            <th>P95</th>
-          </tr>
-        </thead>
-        <tbody>
-          {Object.entries(histData).map(([label, vals]) => {
-            const s = [...vals].sort((a, b) => a - b);
-            return (
+      {/* KDE Distribution Metrics — matches analytics_frontend "KDE Distribution Metrics" table */}
+      <div style={{ marginTop: "1rem" }}>
+        <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-secondary)", marginBottom: 4, letterSpacing: "0.05em" }}>
+          KDE DISTRIBUTION METRICS
+          <span style={{ fontWeight: 400, color: "var(--text-muted)", marginLeft: 8 }}>
+            (CDF of Gaussian KDE evaluated at 200pts over [μ±2σ], bw={kdeBw.toFixed(2)})
+          </span>
+        </div>
+        <table className="fn-table fn-pct-table">
+          <thead>
+            <tr>
+              <th>Series</th>
+              <th>N pts</th>
+              <th>P5</th>
+              <th>P25</th>
+              <th>P50</th>
+              <th>P75</th>
+              <th>P95</th>
+            </tr>
+          </thead>
+          <tbody>
+            {Object.entries(histData).map(([label, vals]) => (
               <tr key={label}>
                 <td>{label}</td>
+                <td style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-muted)" }}>{vals.length}</td>
                 {[5, 25, 50, 75, 95].map((p) => (
                   <td key={p} style={{ fontFamily: "var(--font-mono)", fontSize: 11 }}>
-                    {percentileOf(s, p).toFixed(2)}%
+                    {kdePercentile(vals, kdeBw, p).toFixed(2)}%
                   </td>
                 ))}
               </tr>
-            );
-          })}
-        </tbody>
-      </table>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Empirical Distribution Metrics — matches analytics_frontend "Empirical Distribution Metrics" table */}
+      <div style={{ marginTop: "1rem" }}>
+        <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-secondary)", marginBottom: 4, letterSpacing: "0.05em" }}>
+          EMPIRICAL DISTRIBUTION METRICS
+          <span style={{ fontWeight: 400, color: "var(--text-muted)", marginLeft: 8 }}>
+            (pandas-style linear interpolation quantiles on raw MA values)
+          </span>
+        </div>
+        <table className="fn-table fn-pct-table">
+          <thead>
+            <tr>
+              <th>Series</th>
+              <th>N pts</th>
+              <th>P5</th>
+              <th>P25</th>
+              <th>P50 (Median)</th>
+              <th>P75</th>
+              <th>P95</th>
+            </tr>
+          </thead>
+          <tbody>
+            {Object.entries(histData).map(([label, vals]) => {
+              const s = [...vals].sort((a, b) => a - b);
+              return (
+                <tr key={label}>
+                  <td>{label}</td>
+                  <td style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-muted)" }}>{vals.length}</td>
+                  {[5, 25, 50, 75, 95].map((p) => (
+                    <td key={p} style={{ fontFamily: "var(--font-mono)", fontSize: 11 }}>
+                      {percentileOf(s, p).toFixed(2)}%
+                    </td>
+                  ))}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -972,6 +1112,9 @@ export default function FundingPage() {
       ) : (
         <div className="card fn-empty">Could not load snapshot — API may be starting up.</div>
       )}
+
+      {/* Instruments reference */}
+      <InstrumentPanel symbol={symbol} />
 
       {/* Section 2: Controls */}
       <Controls
