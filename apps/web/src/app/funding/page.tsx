@@ -1149,7 +1149,7 @@ export default function FundingPage() {
     new Set(["binance", "okx", "bybit", "deribit"])
   );
   const [blendMode, setBlendMode] = useState("off");
-  const [days, setDays] = useState(365);
+  const [days, setDays] = useState(90);
   const [maPeriods, setMaPeriods] = useState<[number, number, number]>([7, 30, 90]);
   const [kdeBw, setKdeBw] = useState(0.4);
   const [histBins, setHistBins] = useState(30);

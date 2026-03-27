@@ -1522,6 +1522,12 @@ details[open] .assumptions-summary::before { content: "▼  "; }
   gap: 1rem 2rem;
   align-items: flex-start;
   padding: 0.85rem 1rem;
+  /* Sticky below the app header so controls are always reachable while scrolling */
+  position: sticky;
+  top: var(--header-height);
+  z-index: 50;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
 }
 
 .fn-control-group {
