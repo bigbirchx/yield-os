@@ -49,7 +49,21 @@ async def funding_history(
         default="binance",
         description="Exchange name: binance | okx | bybit | deribit",
     ),
-    days: int = Query(default=365, ge=1, le=365),
+    days: int = Query(
+        default=365,
+        ge=1,
+        le=730,
+        description="Number of days of history to return (max 730)",
+    ),
+    warmup_days: int = Query(
+        default=0,
+        ge=0,
+        le=365,
+        description=(
+            "Extra days fetched before the display window to prime MA calculations. "
+            "Returned data starts warmup_days before the display cutoff."
+        ),
+    ),
     blend: bool = Query(
         default=False,
         description="When true, return blended series for all available exchanges",
@@ -61,16 +75,18 @@ async def funding_history(
     - blend=false: raw daily series for the requested exchange
     - blend=true:  equal-weighted, OI-weighted, and volume-weighted blended
                    series across all available exchanges
+
+    Use ``warmup_days`` to prepend extra data so client-side rolling MAs are
+    fully primed (e.g. warmup_days=90 for a 90-day MA window).
     """
     sym = symbol.upper()
 
     if blend:
-        blended = await get_blended_history(sym, days)
+        blended = await get_blended_history(sym, days, warmup_days)
 
         def _pts(lst: list[dict]) -> list[SeriesPoint]:
             return [SeriesPoint(**p) for p in lst]
 
-        # Use equal-weighted as the primary "series" for chart default
         primary = _pts(blended.get("equal_weighted", []))
         return FundingHistoryOut(
             symbol=sym,
@@ -83,7 +99,7 @@ async def funding_history(
             ),
         )
 
-    df = await get_funding_history(sym, exchange, days)
+    df = await get_funding_history(sym, exchange, days, warmup_days)
     if df.empty:
         return FundingHistoryOut(symbol=sym, exchange=exchange, series=[])
 

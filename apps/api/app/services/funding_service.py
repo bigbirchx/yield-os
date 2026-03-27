@@ -173,86 +173,149 @@ def _safe_float(val: object) -> float | None:
 # ---------------------------------------------------------------------------
 
 async def _binance_rest_history(symbol: str, days: int) -> pd.DataFrame:
-    """Binance FAPI funding rate history — public REST, no key needed."""
-    limit = min(1000, days * 3 + 10)
+    """Binance FAPI funding rate history — paginated REST, no key needed.
+
+    Binance caps at 1000 records per call (≈333 days at 3/day).  We paginate
+    by advancing ``startTime`` until we have the full requested window.
+    """
+    cutoff_ms = int((pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=days)).timestamp() * 1000)
+    start_ms = cutoff_ms
+    all_records: list[dict] = []
     try:
         async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as c:
-            r = await c.get(
-                "https://fapi.binance.com/fapi/v1/fundingRate",
-                params={"symbol": f"{symbol}USDT", "limit": limit},
-            )
-            r.raise_for_status()
-            data = r.json()
-            if not data:
-                return pd.DataFrame()
-            df = pd.DataFrame(data)
-            df.index = pd.to_datetime(df["fundingTime"].astype(int), unit="ms", utc=True)
-            df.index.name = "snapshot_at"
-            df["annualized_funding_rate"] = df["fundingRate"].astype(float) * _ANNUALIZE_8H
-            cutoff = pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=days)
-            return df[df.index >= cutoff][["annualized_funding_rate"]].sort_index().dropna()
+            for _ in range(10):  # safety cap — 10 pages × 1000 = 10 000 records
+                r = await c.get(
+                    "https://fapi.binance.com/fapi/v1/fundingRate",
+                    params={"symbol": f"{symbol}USDT", "startTime": start_ms, "limit": 1000},
+                )
+                r.raise_for_status()
+                page = r.json()
+                if not page:
+                    break
+                all_records.extend(page)
+                if len(page) < 1000:
+                    break  # last page
+                start_ms = int(page[-1]["fundingTime"]) + 1  # advance cursor
+
+        if not all_records:
+            return pd.DataFrame()
+        df = pd.DataFrame(all_records)
+        df.index = pd.to_datetime(df["fundingTime"].astype(int), unit="ms", utc=True)
+        df.index.name = "snapshot_at"
+        df["annualized_funding_rate"] = df["fundingRate"].astype(float) * _ANNUALIZE_8H
+        return df[~df.index.duplicated(keep="last")][["annualized_funding_rate"]].sort_index().dropna()
     except Exception:
         log.exception("binance_rest_history_error", symbol=symbol)
         return pd.DataFrame()
 
 
 async def _okx_rest_history(symbol: str, days: int) -> pd.DataFrame:
-    """OKX public funding rate history REST."""
+    """OKX public funding rate history — paginated REST.
+
+    OKX returns at most 100 records per page (≈33 days at 3/day).  Paginate
+    using the ``after`` parameter (fundingTime of the oldest record on the
+    current page) to walk back in time.
+    """
+    cutoff_ms = int((pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=days)).timestamp() * 1000)
+    all_records: list[dict] = []
+    after: str | None = None
     try:
         async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as c:
-            r = await c.get(
-                "https://www.okx.com/api/v5/public/funding-rate-history",
-                params={"instId": f"{symbol}-USDT-SWAP", "limit": 100},
-            )
-            r.raise_for_status()
-            data = r.json().get("data", [])
-            if not data:
-                return pd.DataFrame()
-            records = []
-            for item in data:
-                ts = pd.to_datetime(int(item["fundingTime"]), unit="ms", utc=True)
-                rate_key = "realizedRate" if "realizedRate" in item else "fundingRate"
-                rate = _safe_float(item.get(rate_key))
-                if rate is not None:
-                    records.append({
-                        "snapshot_at": ts,
-                        "annualized_funding_rate": rate * _ANNUALIZE_8H,
-                    })
-            if not records:
-                return pd.DataFrame()
-            df = pd.DataFrame(records).set_index("snapshot_at").sort_index()
-            return df.dropna()
+            for _ in range(20):  # 20 pages × 100 = 2000 records ≈ 667 days
+                params: dict = {"instId": f"{symbol}-USDT-SWAP", "limit": 100}
+                if after:
+                    params["after"] = after
+                r = await c.get(
+                    "https://www.okx.com/api/v5/public/funding-rate-history",
+                    params=params,
+                )
+                r.raise_for_status()
+                page = r.json().get("data", [])
+                if not page:
+                    break
+                hit_cutoff = False
+                for item in page:
+                    if int(item["fundingTime"]) < cutoff_ms:
+                        hit_cutoff = True
+                        break
+                    all_records.append(item)
+                if hit_cutoff or len(page) < 100:
+                    break
+                after = page[-1]["fundingTime"]  # oldest on this page → next cursor
+
+        if not all_records:
+            return pd.DataFrame()
+        records = []
+        for item in all_records:
+            ts = pd.to_datetime(int(item["fundingTime"]), unit="ms", utc=True)
+            rate_key = "realizedRate" if "realizedRate" in item else "fundingRate"
+            rate = _safe_float(item.get(rate_key))
+            if rate is not None:
+                records.append({
+                    "snapshot_at": ts,
+                    "annualized_funding_rate": rate * _ANNUALIZE_8H,
+                })
+        if not records:
+            return pd.DataFrame()
+        df = pd.DataFrame(records).set_index("snapshot_at").sort_index()
+        return df[~df.index.duplicated(keep="last")].dropna()
     except Exception:
         log.exception("okx_rest_history_error", symbol=symbol)
         return pd.DataFrame()
 
 
 async def _bybit_rest_history(symbol: str, days: int) -> pd.DataFrame:
-    """Bybit linear perpetual funding rate history — public REST."""
+    """Bybit linear perpetual funding rate history — paginated REST.
+
+    Bybit returns at most 200 records per page (≈67 days at 3/day).  Paginate
+    by walking the ``startTime``/``endTime`` window backward in time until we
+    have the full requested period.
+    """
+    now_ms = int(pd.Timestamp.now(tz="UTC").timestamp() * 1000)
+    cutoff_ms = int((pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=days)).timestamp() * 1000)
+    end_ms = now_ms
+    all_records: list[dict] = []
     try:
         async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as c:
-            r = await c.get(
-                "https://api.bybit.com/v5/market/funding/history",
-                params={"category": "linear", "symbol": f"{symbol}USDT", "limit": 200},
-            )
-            r.raise_for_status()
-            data = r.json().get("result", {}).get("list", [])
-            if not data:
-                return pd.DataFrame()
-            records = []
-            for item in data:
-                ts = pd.to_datetime(int(item["fundingRateTimestamp"]), unit="ms", utc=True)
-                rate = _safe_float(item.get("fundingRate"))
-                if rate is not None:
-                    records.append({
-                        "snapshot_at": ts,
-                        "annualized_funding_rate": rate * _ANNUALIZE_8H,
-                    })
-            if not records:
-                return pd.DataFrame()
-            df = pd.DataFrame(records).set_index("snapshot_at").sort_index()
-            cutoff = pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=days)
-            return df[df.index >= cutoff].dropna()
+            for _ in range(20):  # 20 pages × 200 = 4000 records ≈ 1333 days
+                r = await c.get(
+                    "https://api.bybit.com/v5/market/funding/history",
+                    params={
+                        "category": "linear",
+                        "symbol": f"{symbol}USDT",
+                        "startTime": cutoff_ms,
+                        "endTime": end_ms,
+                        "limit": 200,
+                    },
+                )
+                r.raise_for_status()
+                page = r.json().get("result", {}).get("list", [])
+                if not page:
+                    break
+                all_records.extend(page)
+                if len(page) < 200:
+                    break  # last page for this window
+                # Walk backward: oldest record in page becomes new ceiling
+                end_ms = min(int(d["fundingRateTimestamp"]) for d in page) - 1
+                if end_ms < cutoff_ms:
+                    break
+
+        if not all_records:
+            return pd.DataFrame()
+        records = []
+        for item in all_records:
+            ts = pd.to_datetime(int(item["fundingRateTimestamp"]), unit="ms", utc=True)
+            rate = _safe_float(item.get("fundingRate"))
+            if rate is not None:
+                records.append({
+                    "snapshot_at": ts,
+                    "annualized_funding_rate": rate * _ANNUALIZE_8H,
+                })
+        if not records:
+            return pd.DataFrame()
+        df = pd.DataFrame(records).set_index("snapshot_at").sort_index()
+        cutoff = pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=days)
+        return df[~df.index.duplicated(keep="last")][df.index >= cutoff].dropna()
     except Exception:
         log.exception("bybit_rest_history_error", symbol=symbol)
         return pd.DataFrame()
@@ -681,15 +744,27 @@ async def get_funding_snapshot(symbol: str) -> FundingSnapshot:
     )
 
 
-async def get_funding_history(symbol: str, exchange: str, days: int = 365) -> pd.DataFrame:
-    """Return normalised daily history for a single exchange."""
+async def get_funding_history(
+    symbol: str,
+    exchange: str,
+    days: int = 365,
+    warmup_days: int = 0,
+) -> pd.DataFrame:
+    """Return normalised daily history for a single exchange.
+
+    ``warmup_days`` extra days are fetched before ``days`` so that rolling-MA
+    calculations on the caller side are fully primed at the start of the
+    display window.  The returned DataFrame includes the warmup period; the
+    caller trims as needed.
+    """
     sym = symbol.upper()
     exch = exchange.lower()
+    fetch_days = days + warmup_days
 
     if exch in ("binance", "okx"):
-        return await _mongo_history(sym, exch, days)
+        return await _mongo_history(sym, exch, fetch_days)
 
-    key = f"{exch}_{sym}_{days}"
+    key = f"{exch}_{sym}_{fetch_days}"
     cached = _cache_get(key)
     if cached is not None:
         return cached
@@ -704,7 +779,7 @@ async def get_funding_history(symbol: str, exchange: str, days: int = 365) -> pd
             except Exception:
                 pass
         if df.empty:
-            df = await _bybit_rest_history(sym, days)
+            df = await _bybit_rest_history(sym, fetch_days)
     elif exch == "deribit":
         if _HAS_APIS and PerpFuture is not None:
             try:
@@ -714,24 +789,29 @@ async def get_funding_history(symbol: str, exchange: str, days: int = 365) -> pd
             except Exception:
                 pass
         if df.empty:
-            df = await _deribit_rest_history(sym, days)
+            df = await _deribit_rest_history(sym, fetch_days)
 
-    if not df.empty and days < 3650:
-        cutoff = pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=days)
+    if not df.empty and fetch_days < 3650:
+        cutoff = pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=fetch_days)
         df = df[df.index >= cutoff]
 
     _cache_set(key, df)
     return df
 
 
-async def get_blended_history(symbol: str, days: int = 365) -> dict[str, list[dict]]:
+async def get_blended_history(
+    symbol: str,
+    days: int = 365,
+    warmup_days: int = 0,
+) -> dict[str, list[dict]]:
     """Fetch all available exchange histories and compute blended daily series."""
     sym = symbol.upper()
+    fetch_days = days + warmup_days
     hists = await asyncio.gather(
-        _mongo_history(sym, "binance", days),
-        _mongo_history(sym, "okx", days),
-        get_funding_history(sym, "bybit", days),
-        get_funding_history(sym, "deribit", days),
+        _mongo_history(sym, "binance", fetch_days),
+        _mongo_history(sym, "okx", fetch_days),
+        get_funding_history(sym, "bybit", fetch_days),
+        get_funding_history(sym, "deribit", fetch_days),
         return_exceptions=True,
     )
     labels = ("binance", "okx", "bybit", "deribit")

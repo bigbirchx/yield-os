@@ -113,11 +113,12 @@ async function fetchHistory(
   symbol: string,
   exchange: string,
   days: number,
-  blend: boolean
+  blend: boolean,
+  warmupDays = 0
 ): Promise<HistoryResp | null> {
   try {
     const r = await fetch(
-      `${API_URL}/api/funding/history?symbol=${symbol}&exchange=${exchange}&days=${days}&blend=${blend}`,
+      `${API_URL}/api/funding/history?symbol=${symbol}&exchange=${exchange}&days=${days}&blend=${blend}&warmup_days=${warmupDays}`,
       { cache: "no-store" }
     );
     if (!r.ok) return null;
@@ -294,6 +295,8 @@ function Controls({
   setDays,
   maPeriods,
   setMaPeriods,
+  histBins,
+  setHistBins,
 }: {
   symbol: string;
   setSymbol: (s: string) => void;
@@ -305,6 +308,8 @@ function Controls({
   setDays: (d: number) => void;
   maPeriods: [number, number, number];
   setMaPeriods: (p: [number, number, number]) => void;
+  histBins: number;
+  setHistBins: (b: number) => void;
 }) {
   return (
     <div className="card fn-controls">
@@ -363,6 +368,19 @@ function Controls({
             {d}d
           </button>
         ))}
+        <input
+          type="number"
+          className="fn-ma-input"
+          value={days}
+          min={7}
+          max={730}
+          title="Custom day count (7–730)"
+          onChange={(e) => {
+            const v = parseInt(e.target.value);
+            if (v >= 7 && v <= 730) setDays(v);
+          }}
+          style={{ width: 54 }}
+        />
       </div>
 
       <div className="fn-control-group">
@@ -383,6 +401,32 @@ function Controls({
           />
         ))}
         <span style={{ fontSize: 11, color: "var(--text-muted)" }}>days</span>
+      </div>
+
+      <div className="fn-control-group">
+        <span className="fn-control-label">HIST BINS</span>
+        {[10, 20, 30, 50, 100].map((b) => (
+          <button
+            key={b}
+            className={`fn-chip${histBins === b ? " fn-chip--active" : ""}`}
+            onClick={() => setHistBins(b)}
+          >
+            {b}
+          </button>
+        ))}
+        <input
+          type="number"
+          className="fn-ma-input"
+          value={histBins}
+          min={5}
+          max={200}
+          title="Custom bin count (5–200)"
+          onChange={(e) => {
+            const v = parseInt(e.target.value);
+            if (v >= 5 && v <= 200) setHistBins(v);
+          }}
+          style={{ width: 54 }}
+        />
       </div>
     </div>
   );
@@ -405,13 +449,16 @@ function FundingChart({
   const [blendedSeries, setBlendedSeries] = useState<Record<string, SeriesPoint[]>>({});
   const [loading, setLoading] = useState(false);
 
+  // Warmup = longest MA period so the MA window is fully primed at t=0
+  const warmup = Math.max(...maPeriods);
+
   useEffect(() => {
     setLoading(true);
     const isBlend = blendMode !== "off";
 
     const fetchAll = async () => {
       if (isBlend) {
-        const data = await fetchHistory(symbol, "binance", days, true);
+        const data = await fetchHistory(symbol, "binance", days, true, warmup);
         if (data?.blend_series) {
           setBlendedSeries({
             equal: data.blend_series.equal_weighted,
@@ -419,9 +466,8 @@ function FundingChart({
             volume: data.blend_series.volume_weighted,
           });
         }
-        // Also fetch individual exchange histories for overlay
         const individual = await Promise.all(
-          [...selectedExchanges].map((e) => fetchHistory(symbol, e, days, false))
+          [...selectedExchanges].map((e) => fetchHistory(symbol, e, days, false, warmup))
         );
         const map: Record<string, SeriesPoint[]> = {};
         [...selectedExchanges].forEach((e, i) => {
@@ -430,7 +476,7 @@ function FundingChart({
         setHistories(map);
       } else {
         const results = await Promise.all(
-          [...selectedExchanges].map((e) => fetchHistory(symbol, e, days, false))
+          [...selectedExchanges].map((e) => fetchHistory(symbol, e, days, false, warmup))
         );
         const map: Record<string, SeriesPoint[]> = {};
         [...selectedExchanges].forEach((e, i) => {
@@ -442,20 +488,23 @@ function FundingChart({
     };
 
     fetchAll();
-  }, [symbol, days, blendMode, selectedExchanges]);
+  }, [symbol, days, blendMode, selectedExchanges, warmup]);
 
   const option = useMemo(() => {
     const isBlend = blendMode !== "off";
     const series: object[] = [];
+    const displayCutoffDate = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
 
-    // Individual exchange lines
+    // Individual exchange lines — trim warmup prefix from display
     [...selectedExchanges].forEach((e) => {
       const pts = histories[e];
       if (!pts?.length) return;
       series.push({
         name: EXCHANGE_LABELS[e],
         type: "line",
-        data: pts.map((p) => [p.date, (p.value * 100).toFixed(4)]),
+        data: pts
+          .filter((p) => p.date >= displayCutoffDate)
+          .map((p) => [p.date, (p.value * 100).toFixed(4)]),
         symbol: "none",
         lineStyle: {
           color: EXCHANGE_COLORS[e],
@@ -483,7 +532,9 @@ function FundingChart({
         series.push({
           name: blendLabel,
           type: "line",
-          data: pts.map((p) => [p.date, (p.value * 100).toFixed(4)]),
+          data: pts
+            .filter((p) => p.date >= displayCutoffDate)
+            .map((p) => [p.date, (p.value * 100).toFixed(4)]),
           symbol: "none",
           lineStyle: { color: blendColor, width: 2.5 },
           itemStyle: { color: blendColor },
@@ -493,7 +544,10 @@ function FundingChart({
       }
     }
 
-    // MA overlays on the first visible exchange (or blend)
+    // MA overlays on the first visible exchange (or blend).
+    // The fetched series includes `warmup` extra days prepended so that the
+    // MA window is fully primed.  We compute MAs on the full series, then
+    // trim the display cutoff to the last `days` calendar days.
     const maSource =
       isBlend && blendedSeries[(blendMode === "equal" ? "equal" : blendMode === "oi" ? "oi" : "volume")]
         ? blendedSeries[blendMode === "equal" ? "equal" : blendMode === "oi" ? "oi" : "volume"]
@@ -501,17 +555,22 @@ function FundingChart({
     const MA_COLORS = ["#f59e0b88", "#ef444488", "#22c55e88"];
 
     if (maSource?.length) {
+      // Display cutoff: exclude the warmup prefix
+      const displayCutoff = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
+
       maPeriods.forEach((period, i) => {
         const values = maSource.map((p) => p.value * 100);
         const maVals = values.map((_, j) => {
           if (j < period - 1) return null;
-          const window = values.slice(j - period + 1, j + 1);
-          return window.reduce((a, b) => a + b, 0) / window.length;
+          const w = values.slice(j - period + 1, j + 1);
+          return w.reduce((a, b) => a + b, 0) / w.length;
         });
         series.push({
           name: `MA${period}`,
           type: "line",
-          data: maSource.map((p, j) => [p.date, maVals[j]?.toFixed(4) ?? null]),
+          data: maSource
+            .map((p, j) => [p.date, maVals[j]?.toFixed(4) ?? null] as [string, string | null])
+            .filter(([date]) => date >= displayCutoff),
           symbol: "none",
           lineStyle: { color: MA_COLORS[i], width: 1, type: "dashed" },
           itemStyle: { color: MA_COLORS[i] },
@@ -582,6 +641,7 @@ function DistributionPanel({
   maPeriods,
   kdeBw,
   setKdeBw,
+  histBins,
 }: {
   symbol: string;
   selectedExchanges: Set<string>;
@@ -589,6 +649,7 @@ function DistributionPanel({
   maPeriods: [number, number, number];
   kdeBw: number;
   setKdeBw: (v: number) => void;
+  histBins: number;
 }) {
   const [histData, setHistData] = useState<Record<string, number[]>>({});
 
@@ -596,19 +657,28 @@ function DistributionPanel({
     const load = async () => {
       const first = [...selectedExchanges][0];
       if (!first) return;
-      const data = await fetchHistory(symbol, first, days, false);
+      const warmup = Math.max(...maPeriods);
+      // Fetch with warmup so MA values in the display window are fully primed
+      const data = await fetchHistory(symbol, first, days, false, warmup);
       if (!data?.series?.length) return;
-      const vals = data.series.map((p) => p.value * 100);
 
-      // Build MA series from raw values
+      const displayCutoff = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
+      const fullVals = data.series.map((p) => p.value * 100);
+
+      // Compute rolling MAs on full (warmup-included) series
       const maData: Record<string, number[]> = {};
       maPeriods.forEach((period) => {
-        const maVals: number[] = [];
-        for (let i = period - 1; i < vals.length; i++) {
-          const w = vals.slice(i - period + 1, i + 1);
-          maVals.push(w.reduce((a, b) => a + b, 0) / w.length);
-        }
-        maData[`MA${period}`] = maVals;
+        const allMaVals: Array<number | null> = fullVals.map((_, j) => {
+          if (j < period - 1) return null;
+          const w = fullVals.slice(j - period + 1, j + 1);
+          return w.reduce((a, b) => a + b, 0) / w.length;
+        });
+        // Trim to display window only (drop warmup prefix)
+        const trimmed = data.series
+          .map((p, j) => ({ date: p.date, ma: allMaVals[j] }))
+          .filter(({ date, ma }) => date >= displayCutoff && ma !== null)
+          .map(({ ma }) => ma as number);
+        maData[`MA${period}`] = trimmed;
       });
       setHistData(maData);
     };
@@ -629,9 +699,9 @@ function DistributionPanel({
 
     Object.entries(histData).forEach(([label, vals], idx) => {
       const sorted = [...vals].sort((a, b) => a - b);
-      const hist = buildHistogram(vals, 30);
+      const hist = buildHistogram(vals, histBins);
       const kde = gaussianKDE(vals, kdeBw);
-      const kdeSeries = kdeXs.map((x) => [x, kde(x) * vals.length * ((globalMax - globalMin) / 30)]);
+      const kdeSeries = kdeXs.map((x) => [x, kde(x) * vals.length * ((globalMax - globalMin) / histBins)]);
       const pctValue = percentileOf(sorted, pctTarget);
 
       series.push({
@@ -863,9 +933,10 @@ export default function FundingPage() {
     new Set(["binance", "okx", "bybit", "deribit"])
   );
   const [blendMode, setBlendMode] = useState("off");
-  const [days, setDays] = useState(90);
+  const [days, setDays] = useState(365);
   const [maPeriods, setMaPeriods] = useState<[number, number, number]>([7, 30, 90]);
   const [kdeBw, setKdeBw] = useState(0.4);
+  const [histBins, setHistBins] = useState(30);
   const [snap, setSnap] = useState<FundingSnapshotResp | null>(null);
   const [snapLoading, setSnapLoading] = useState(true);
 
@@ -914,6 +985,8 @@ export default function FundingPage() {
         setDays={setDays}
         maPeriods={maPeriods}
         setMaPeriods={setMaPeriods}
+        histBins={histBins}
+        setHistBins={setHistBins}
       />
 
       {/* Section 3: Chart */}
@@ -933,6 +1006,7 @@ export default function FundingPage() {
         maPeriods={maPeriods}
         kdeBw={kdeBw}
         setKdeBw={setKdeBw}
+        histBins={histBins}
       />
 
       {/* Section 5: Coinglass strip */}
