@@ -637,14 +637,17 @@ function FundingChart({
       }
     }
 
-    // MA overlays on the first visible exchange (or blend).
-    // The fetched series includes `warmup` extra days prepended so that the
-    // MA window is fully primed.  We compute MAs on the full series, then
-    // trim the display cutoff to the last `days` calendar days.
-    const maSource =
-      isBlend && blendedSeries[(blendMode === "equal" ? "equal" : blendMode === "oi" ? "oi" : "volume")]
-        ? blendedSeries[blendMode === "equal" ? "equal" : blendMode === "oi" ? "oi" : "volume"]
-        : histories[[...selectedExchanges][0]];
+    // MA overlays: only shown when there is a single unambiguous source series —
+    // either exactly one exchange is selected, or blend mode is active (which
+    // collapses all exchanges into one line).  With multiple raw exchange lines
+    // visible simultaneously the overlays create visual noise with no clear
+    // attachment point.
+    const showMAs = isBlend || selectedExchanges.size === 1;
+    const maSource = showMAs
+      ? (isBlend && blendedSeries[(blendMode === "equal" ? "equal" : blendMode === "oi" ? "oi" : "volume")]
+          ? blendedSeries[blendMode === "equal" ? "equal" : blendMode === "oi" ? "oi" : "volume"]
+          : histories[[...selectedExchanges][0]])
+      : null;
     const MA_COLORS = ["#f59e0b88", "#ef444488", "#22c55e88"];
 
     if (maSource?.length) {
