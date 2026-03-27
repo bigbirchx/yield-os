@@ -761,18 +761,24 @@ function DistributionPanel({
 
       const fullVals = data.series.map((p) => p.value * 100);
 
-      // Compute rolling MAs on full (warmup + display) series.
-      // Keep ALL primed values (no display-window trim) — matches the
-      // analytics_frontend which computes distribution over dropna() of the
-      // entire fetch window, not just the last `days` days.
+      // Compute rolling MAs on the full (warmup + display) series so each
+      // window is fully primed, then trim the distribution to only the last
+      // `days` calendar days.  The warmup is scaffolding — it primes the MA
+      // but should not pad the distribution when the user changes the lookback.
+      const displayCutoff = new Date(Date.now() - days * 86_400_000)
+        .toISOString()
+        .slice(0, 10);
+
       const maData: Record<string, number[]> = {};
       maPeriods.forEach((period) => {
-        const primed: number[] = [];
+        const trimmed: number[] = [];
         for (let j = period - 1; j < fullVals.length; j++) {
+          const date = data.series[j].date;
+          if (date < displayCutoff) continue; // within warmup prefix — skip
           const w = fullVals.slice(j - period + 1, j + 1);
-          primed.push(w.reduce((a, b) => a + b, 0) / w.length);
+          trimmed.push(w.reduce((a, b) => a + b, 0) / w.length);
         }
-        maData[`MA${period}`] = primed;
+        maData[`MA${period}`] = trimmed;
       });
       setHistData(maData);
     };
