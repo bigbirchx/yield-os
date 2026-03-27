@@ -744,37 +744,37 @@ function DistributionPanel({
   setKdeBw: (v: number) => void;
   histBins: number;
 }) {
+  const exchList = [...selectedExchanges];
+
+  // Which exchange the distribution is currently showing
+  const [distExchange, setDistExchange] = useState<string>(exchList[0] ?? "binance");
+
+  // Reset to first exchange whenever the selection changes
+  useEffect(() => {
+    const list = [...selectedExchanges];
+    if (!list.includes(distExchange)) setDistExchange(list[0] ?? "binance");
+  }, [selectedExchanges]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const [histData, setHistData] = useState<Record<string, number[]>>({});
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     const load = async () => {
-      const first = [...selectedExchanges][0];
-      if (!first) return;
-
-      // Mirror analytics_frontend: warmup = max(periods) * 2 + 1
-      // This ensures the rolling-MA window is fully primed from the very first
-      // data point in the display range, matching the reference distribution window.
+      setLoading(true);
       const maxPeriod = Math.max(...maPeriods);
       const warmup = maxPeriod * 2 + 1;
-      const data = await fetchHistory(symbol, first, days, false, warmup);
-      if (!data?.series?.length) return;
+      const data = await fetchHistory(symbol, distExchange, days, false, warmup);
+      setLoading(false);
+      if (!data?.series?.length) { setHistData({}); return; }
 
       const fullVals = data.series.map((p) => p.value * 100);
-
-      // Compute rolling MAs on the full (warmup + display) series so each
-      // window is fully primed, then trim the distribution to only the last
-      // `days` calendar days.  The warmup is scaffolding — it primes the MA
-      // but should not pad the distribution when the user changes the lookback.
-      const displayCutoff = new Date(Date.now() - days * 86_400_000)
-        .toISOString()
-        .slice(0, 10);
+      const displayCutoff = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
 
       const maData: Record<string, number[]> = {};
       maPeriods.forEach((period) => {
         const trimmed: number[] = [];
         for (let j = period - 1; j < fullVals.length; j++) {
-          const date = data.series[j].date;
-          if (date < displayCutoff) continue; // within warmup prefix — skip
+          if (data.series[j].date < displayCutoff) continue;
           const w = fullVals.slice(j - period + 1, j + 1);
           trimmed.push(w.reduce((a, b) => a + b, 0) / w.length);
         }
@@ -783,12 +783,23 @@ function DistributionPanel({
       setHistData(maData);
     };
     load();
-  }, [symbol, selectedExchanges, days, maPeriods]);
+  }, [symbol, distExchange, days, maPeriods]);
 
   const [pctTarget, setPctTarget] = useState(50);
 
+  // Derived: per-MA percentile values at pctTarget (empirical)
+  const pctValues = useMemo(() =>
+    Object.fromEntries(
+      Object.entries(histData).map(([label, vals]) => {
+        const s = [...vals].sort((a, b) => a - b);
+        return [label, percentileOf(s, pctTarget)];
+      })
+    ),
+  [histData, pctTarget]);
+
+  const MA_COLORS = ["#f59e0b", "#ef4444", "#22c55e"];
+
   const histogramOption = useMemo(() => {
-    const MA_COLORS = ["#f59e0b", "#ef4444", "#22c55e"];
     const series: object[] = [];
     const allVals = Object.values(histData).flat();
     if (!allVals.length) return {};
@@ -798,11 +809,10 @@ function DistributionPanel({
     const kdeXs = Array.from({ length: 200 }, (_, i) => globalMin + (i / 199) * (globalMax - globalMin));
 
     Object.entries(histData).forEach(([label, vals], idx) => {
-      const sorted = [...vals].sort((a, b) => a - b);
       const hist = buildHistogram(vals, histBins);
       const kde = gaussianKDE(vals, kdeBw);
       const kdeSeries = kdeXs.map((x) => [x, kde(x) * vals.length * ((globalMax - globalMin) / histBins)]);
-      const pctValue = percentileOf(sorted, pctTarget);
+      const pctValue = pctValues[label] ?? 0;
 
       series.push({
         name: label,
@@ -850,11 +860,10 @@ function DistributionPanel({
       },
       series,
     };
-  }, [histData, kdeBw, pctTarget]);
+  }, [histData, kdeBw, pctTarget, histBins, pctValues]);
 
   const boxOption = useMemo(() => {
     if (!Object.keys(histData).length) return {};
-    const MA_COLORS = ["#f59e0b", "#ef4444", "#22c55e"];
     const boxData = Object.entries(histData).map(([label, vals]) => {
       const s = [...vals].sort((a, b) => a - b);
       return {
@@ -862,7 +871,6 @@ function DistributionPanel({
         value: [s[0], percentileOf(s, 25), percentileOf(s, 50), percentileOf(s, 75), s[s.length - 1]],
       };
     });
-
     return {
       backgroundColor: "transparent",
       grid: { top: 20, right: 20, bottom: 30, left: 70 },
@@ -892,120 +900,182 @@ function DistributionPanel({
     };
   }, [histData]);
 
-  if (!Object.keys(histData).length) return null;
+  const hasData = Object.keys(histData).length > 0;
 
   return (
     <div className="card">
       <div className="card-header">Distribution Analysis</div>
 
-      <div className="fn-dist-controls">
-        <label className="fn-control-label">
-          KDE BW
-          <input
-            type="range"
-            min={0.05}
-            max={1.5}
-            step={0.05}
-            value={kdeBw}
-            onChange={(e) => setKdeBw(parseFloat(e.target.value))}
-            style={{ marginLeft: 8, width: 100 }}
-          />
-          <span style={{ fontFamily: "var(--font-mono)", fontSize: 11 }}>{kdeBw.toFixed(2)}</span>
-        </label>
-
-        <label className="fn-control-label" style={{ marginLeft: 24 }}>
-          Percentile
-          <input
-            type="range"
-            min={1}
-            max={99}
-            value={pctTarget}
-            onChange={(e) => setPctTarget(parseInt(e.target.value))}
-            style={{ marginLeft: 8, width: 100 }}
-          />
-          <span style={{ fontFamily: "var(--font-mono)", fontSize: 11 }}>P{pctTarget}</span>
-        </label>
+      {/* Exchange selector */}
+      <div className="fn-control-group" style={{ marginBottom: "1rem" }}>
+        <span className="fn-control-label">EXCHANGE</span>
+        {exchList.map((e) => (
+          <button
+            key={e}
+            className={`fn-chip${distExchange === e ? " fn-chip--active" : ""}`}
+            onClick={() => setDistExchange(e)}
+          >
+            <span
+              className="fn-dot"
+              style={{ background: EXCHANGE_COLORS[e], width: 7, height: 7, marginRight: 4 }}
+            />
+            {EXCHANGE_LABELS[e]}
+          </button>
+        ))}
+        {loading && (
+          <span style={{ fontSize: 11, color: "var(--text-muted)", marginLeft: 12 }}>Loading…</span>
+        )}
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: "1rem" }}>
-        <ReactECharts option={histogramOption} style={{ height: 220 }} theme="dark" notMerge />
-        <ReactECharts option={boxOption} style={{ height: 220 }} theme="dark" notMerge />
-      </div>
-
-      {/* KDE Distribution Metrics — matches analytics_frontend "KDE Distribution Metrics" table */}
-      <div style={{ marginTop: "1rem" }}>
-        <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-secondary)", marginBottom: 4, letterSpacing: "0.05em" }}>
-          KDE DISTRIBUTION METRICS
-          <span style={{ fontWeight: 400, color: "var(--text-muted)", marginLeft: 8 }}>
-            (CDF of Gaussian KDE evaluated at 200pts over [μ±2σ], bw={kdeBw.toFixed(2)})
-          </span>
-        </div>
-        <table className="fn-table fn-pct-table">
-          <thead>
-            <tr>
-              <th>Series</th>
-              <th>N pts</th>
-              <th>P5</th>
-              <th>P25</th>
-              <th>P50</th>
-              <th>P75</th>
-              <th>P95</th>
-            </tr>
-          </thead>
-          <tbody>
-            {Object.entries(histData).map(([label, vals]) => (
-              <tr key={label}>
-                <td>{label}</td>
-                <td style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-muted)" }}>{vals.length}</td>
-                {[5, 25, 50, 75, 95].map((p) => (
-                  <td key={p} style={{ fontFamily: "var(--font-mono)", fontSize: 11 }}>
-                    {kdePercentile(vals, kdeBw, p).toFixed(2)}%
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      {/* Empirical Distribution Metrics — matches analytics_frontend "Empirical Distribution Metrics" table */}
-      <div style={{ marginTop: "1rem" }}>
-        <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-secondary)", marginBottom: 4, letterSpacing: "0.05em" }}>
-          EMPIRICAL DISTRIBUTION METRICS
-          <span style={{ fontWeight: 400, color: "var(--text-muted)", marginLeft: 8 }}>
-            (pandas-style linear interpolation quantiles on raw MA values)
-          </span>
-        </div>
-        <table className="fn-table fn-pct-table">
-          <thead>
-            <tr>
-              <th>Series</th>
-              <th>N pts</th>
-              <th>P5</th>
-              <th>P25</th>
-              <th>P50 (Median)</th>
-              <th>P75</th>
-              <th>P95</th>
-            </tr>
-          </thead>
-          <tbody>
-            {Object.entries(histData).map(([label, vals]) => {
-              const s = [...vals].sort((a, b) => a - b);
+      {hasData && (
+        <>
+          {/* ── Large percentile headline cards ── */}
+          <div style={{
+            display: "grid",
+            gridTemplateColumns: `repeat(${maPeriods.length}, 1fr)`,
+            gap: "0.75rem",
+            marginBottom: "1.25rem",
+          }}>
+            {maPeriods.map((period, i) => {
+              const label = `MA${period}`;
+              const val = pctValues[label];
+              const color = val == null ? "var(--text-muted)"
+                : val > 0.05 ? "var(--green)"
+                : val < -0.05 ? "var(--red)"
+                : "var(--text-secondary)";
               return (
-                <tr key={label}>
-                  <td>{label}</td>
-                  <td style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-muted)" }}>{vals.length}</td>
-                  {[5, 25, 50, 75, 95].map((p) => (
-                    <td key={p} style={{ fontFamily: "var(--font-mono)", fontSize: 11 }}>
-                      {percentileOf(s, p).toFixed(2)}%
-                    </td>
-                  ))}
-                </tr>
+                <div key={label} style={{
+                  background: "var(--surface-2)",
+                  border: "1px solid var(--border)",
+                  borderRadius: 6,
+                  padding: "0.75rem 1rem",
+                  textAlign: "center",
+                }}>
+                  <div style={{
+                    fontSize: 11,
+                    color: "var(--text-muted)",
+                    letterSpacing: "0.08em",
+                    marginBottom: 4,
+                  }}>
+                    {label} · P{pctTarget}
+                    <span style={{ marginLeft: 6, color: MA_COLORS[i], fontSize: 10 }}>●</span>
+                  </div>
+                  <div style={{
+                    fontSize: 28,
+                    fontWeight: 700,
+                    fontFamily: "var(--font-mono)",
+                    color,
+                    lineHeight: 1.1,
+                  }}>
+                    {val != null ? `${val.toFixed(2)}%` : "—"}
+                  </div>
+                  <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 3 }}>
+                    {EXCHANGE_LABELS[distExchange]} · {days}d window
+                  </div>
+                </div>
               );
             })}
-          </tbody>
-        </table>
-      </div>
+          </div>
+
+          {/* Controls row */}
+          <div className="fn-dist-controls">
+            <label className="fn-control-label">
+              KDE BW
+              <input
+                type="range" min={0.05} max={1.5} step={0.05} value={kdeBw}
+                onChange={(e) => setKdeBw(parseFloat(e.target.value))}
+                style={{ marginLeft: 8, width: 100 }}
+              />
+              <span style={{ fontFamily: "var(--font-mono)", fontSize: 11 }}>{kdeBw.toFixed(2)}</span>
+            </label>
+
+            <label className="fn-control-label" style={{ marginLeft: 24 }}>
+              Percentile
+              <input
+                type="range" min={1} max={99} value={pctTarget}
+                onChange={(e) => setPctTarget(parseInt(e.target.value))}
+                style={{ marginLeft: 8, width: 100 }}
+              />
+              <span style={{ fontFamily: "var(--font-mono)", fontSize: 11 }}>P{pctTarget}</span>
+            </label>
+          </div>
+
+          {/* Histogram + Box plot */}
+          <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: "1rem" }}>
+            <ReactECharts option={histogramOption} style={{ height: 220 }} theme="dark" notMerge />
+            <ReactECharts option={boxOption} style={{ height: 220 }} theme="dark" notMerge />
+          </div>
+
+          {/* KDE Distribution Metrics */}
+          <div style={{ marginTop: "1rem" }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-secondary)", marginBottom: 4, letterSpacing: "0.05em" }}>
+              KDE DISTRIBUTION METRICS
+              <span style={{ fontWeight: 400, color: "var(--text-muted)", marginLeft: 8 }}>
+                (CDF of Gaussian KDE at 200pts over [μ±2σ], bw={kdeBw.toFixed(2)})
+              </span>
+            </div>
+            <table className="fn-table fn-pct-table">
+              <thead>
+                <tr>
+                  <th>Series</th><th>N pts</th><th>P5</th><th>P25</th><th>P50</th><th>P75</th><th>P95</th>
+                </tr>
+              </thead>
+              <tbody>
+                {Object.entries(histData).map(([label, vals]) => (
+                  <tr key={label}>
+                    <td>{label}</td>
+                    <td style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-muted)" }}>{vals.length}</td>
+                    {[5, 25, 50, 75, 95].map((p) => (
+                      <td key={p} style={{ fontFamily: "var(--font-mono)", fontSize: 11 }}>
+                        {kdePercentile(vals, kdeBw, p).toFixed(2)}%
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Empirical Distribution Metrics */}
+          <div style={{ marginTop: "1rem" }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-secondary)", marginBottom: 4, letterSpacing: "0.05em" }}>
+              EMPIRICAL DISTRIBUTION METRICS
+              <span style={{ fontWeight: 400, color: "var(--text-muted)", marginLeft: 8 }}>
+                (linear interpolation quantiles on raw MA values)
+              </span>
+            </div>
+            <table className="fn-table fn-pct-table">
+              <thead>
+                <tr>
+                  <th>Series</th><th>N pts</th><th>P5</th><th>P25</th><th>P50 (Median)</th><th>P75</th><th>P95</th>
+                </tr>
+              </thead>
+              <tbody>
+                {Object.entries(histData).map(([label, vals]) => {
+                  const s = [...vals].sort((a, b) => a - b);
+                  return (
+                    <tr key={label}>
+                      <td>{label}</td>
+                      <td style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-muted)" }}>{vals.length}</td>
+                      {[5, 25, 50, 75, 95].map((p) => (
+                        <td key={p} style={{ fontFamily: "var(--font-mono)", fontSize: 11 }}>
+                          {percentileOf(s, p).toFixed(2)}%
+                        </td>
+                      ))}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+
+      {!hasData && !loading && (
+        <div style={{ color: "var(--text-muted)", fontSize: 12, padding: "1rem 0" }}>
+          No data — select an exchange above or adjust lookback.
+        </div>
+      )}
     </div>
   );
 }
