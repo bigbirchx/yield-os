@@ -5,10 +5,12 @@ import {
   fetchDerivativesOverview,
   fetchGlobalMarket,
   fetchLendingOverview,
+  fetchBasisSnapshot,
   fetchDLYields,
   fetchDLProtocols,
   fetchDLStablecoins,
   fetchDLMarketContext,
+  type BasisSnapshot,
   type DLYieldPool,
   type DLProtocol,
   type DLStablecoin,
@@ -119,22 +121,35 @@ function topFunding(derivatives: FlatDerivativesRow[], n = 8): MetricRowData[] {
     });
 }
 
-function topBasis(derivatives: FlatDerivativesRow[], n = 8): MetricRowData[] {
-  return derivatives
-    .filter((r) => r.basis_annualized != null)
-    .sort((a, b) => Math.abs(b.basis_annualized ?? 0) - Math.abs(a.basis_annualized ?? 0))
+function topBasisFromSnapshots(
+  snapshots: (BasisSnapshot | null)[],
+  n = 8,
+): MetricRowData[] {
+  const rows: MetricRowData[] = [];
+  for (const snap of snapshots) {
+    if (!snap) continue;
+    for (const row of snap.term_structure) {
+      if (row.basis_pct_ann == null) continue;
+      rows.push({
+        asset: snap.symbol,
+        subLabel: `${row.venue} · ${row.contract}`,
+        chain: null,
+        value: pct(row.basis_pct_ann * 100),
+        valueSub: `${row.days_to_expiry}d · OI ${row.oi_usd ? usd(row.oi_usd) : "—"}`,
+        valueColor: row.basis_pct_ann >= 0 ? "yellow" : "orange",
+        snapshotAt: snap.as_of,
+        href: `/basis`,
+      });
+    }
+  }
+  return rows
+    .sort((a, b) => {
+      const va = parseFloat(a.value.replace("%", "")) || 0;
+      const vb = parseFloat(b.value.replace("%", "")) || 0;
+      return Math.abs(vb) - Math.abs(va);
+    })
     .slice(0, n)
-    .map((r, i) => ({
-      rank: i + 1,
-      asset: r.asset,
-      subLabel: r.venue,
-      chain: null,
-      value: pct(r.basis_annualized != null ? r.basis_annualized * 100 : null),
-      valueSub: r.open_interest_usd ? `OI ${usd(r.open_interest_usd)}` : undefined,
-      valueColor: (r.basis_annualized ?? 0) >= 0 ? "yellow" : "orange",
-      snapshotAt: r.snapshot_at,
-      href: `/assets/${r.asset}`,
-    }));
+    .map((r, i) => ({ ...r, rank: i + 1 }));
 }
 
 function capacityConstraints(lending: FlatLendingRow[], n = 8): MetricRowData[] {
@@ -163,19 +178,33 @@ function capacityConstraints(lending: FlatLendingRow[], n = 8): MetricRowData[] 
 // -----------------------------------------------------------------------
 
 export default async function OverviewPage() {
-  const [derivativesData, lendingData, globalMarket, dlYields, dlProtocols, dlStables, dlMarket] =
-    await Promise.all([
-      fetchDerivativesOverview(["BTC", "ETH", "SOL"]),
-      fetchLendingOverview(["USDC", "USDT", "ETH", "WBTC", "SOL", "DAI"]),
-      fetchGlobalMarket(),
-      fetchDLYields(undefined, 5_000_000, 30),
-      fetchDLProtocols(),
-      fetchDLStablecoins(),
-      fetchDLMarketContext(),
-    ]);
+  const [
+    derivativesData,
+    lendingData,
+    globalMarket,
+    basisBTC,
+    basisETH,
+    basisSOL,
+    dlYields,
+    dlProtocols,
+    dlStables,
+    dlMarket,
+  ] = await Promise.all([
+    fetchDerivativesOverview(["BTC", "ETH", "SOL"]),
+    fetchLendingOverview(["USDC", "USDT", "ETH", "WBTC", "SOL", "DAI"]),
+    fetchGlobalMarket(),
+    fetchBasisSnapshot("BTC"),
+    fetchBasisSnapshot("ETH"),
+    fetchBasisSnapshot("SOL"),
+    fetchDLYields(undefined, 5_000_000, 30),
+    fetchDLProtocols(),
+    fetchDLStablecoins(),
+    fetchDLMarketContext(),
+  ]);
 
   const lending = flattenLending(lendingData);
   const derivatives = flattenDerivatives(derivativesData);
+  const basisRows = topBasisFromSnapshots([basisBTC, basisETH, basisSOL]);
 
   const now = new Date().toISOString();
 
@@ -202,11 +231,11 @@ export default async function OverviewPage() {
       emptyMessage: "Funding data loading — check the Funding page for live rates",
     },
     {
-      title: "Highest Basis",
+      title: "Highest Basis (Ann.)",
       titleColor: "yellow" as const,
-      source: "Internal / Velo",
-      rows: topBasis(derivatives),
-      emptyMessage: "Basis data loading — check the Basis page for live term structure",
+      source: "Deribit · Bybit",
+      rows: basisRows,
+      emptyMessage: "No basis data — check the Basis page for live term structure",
     },
     {
       title: "Capacity Constraints",
