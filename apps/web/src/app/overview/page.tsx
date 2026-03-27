@@ -1,7 +1,19 @@
 import { GlobalMarketCard } from "@/components/overview/GlobalMarketCard";
 import { MetricSection } from "@/components/overview/MetricSection";
 import type { MetricRowData } from "@/components/overview/MetricRow";
-import { fetchDerivativesOverview, fetchGlobalMarket, fetchLendingOverview } from "@/lib/api";
+import {
+  fetchDerivativesOverview,
+  fetchGlobalMarket,
+  fetchLendingOverview,
+  fetchDLYields,
+  fetchDLProtocols,
+  fetchDLStablecoins,
+  fetchDLMarketContext,
+  type DLYieldPool,
+  type DLProtocol,
+  type DLStablecoin,
+  type DLMarketContext,
+} from "@/lib/api";
 import type {
   DerivativesOverview,
   FlatDerivativesRow,
@@ -9,7 +21,7 @@ import type {
   LendingOverview,
 } from "@/types/api";
 
-export const revalidate = 60; // ISR: revalidate every 60 seconds
+export const revalidate = 120; // ISR: revalidate every 2 minutes
 
 // -----------------------------------------------------------------------
 // Formatting helpers
@@ -151,11 +163,16 @@ function capacityConstraints(lending: FlatLendingRow[], n = 8): MetricRowData[] 
 // -----------------------------------------------------------------------
 
 export default async function OverviewPage() {
-  const [derivativesData, lendingData, globalMarket] = await Promise.all([
-    fetchDerivativesOverview(["BTC", "ETH", "SOL"]),
-    fetchLendingOverview(["USDC", "USDT", "ETH", "WBTC", "SOL", "DAI"]),
-    fetchGlobalMarket(),
-  ]);
+  const [derivativesData, lendingData, globalMarket, dlYields, dlProtocols, dlStables, dlMarket] =
+    await Promise.all([
+      fetchDerivativesOverview(["BTC", "ETH", "SOL"]),
+      fetchLendingOverview(["USDC", "USDT", "ETH", "WBTC", "SOL", "DAI"]),
+      fetchGlobalMarket(),
+      fetchDLYields(undefined, 5_000_000, 30),
+      fetchDLProtocols(),
+      fetchDLStablecoins(),
+      fetchDLMarketContext(),
+    ]);
 
   const lending = flattenLending(lendingData);
   const derivatives = flattenDerivatives(derivativesData);
@@ -200,13 +217,30 @@ export default async function OverviewPage() {
     },
   ];
 
+  // ── DefiLlama helpers ──────────────────────────────────────────────────
+  const dexTotal = dlMarket?.context?.dex_volume?.aggregate;
+  const oiTotal  = dlMarket?.context?.open_interest?.aggregate;
+  const feesTotal = dlMarket?.context?.fees_revenue?.aggregate;
+
+  const topDLYields = [...dlYields]
+    .sort((a, b) => (b.apy ?? 0) - (a.apy ?? 0))
+    .slice(0, 8);
+
+  const topProtocols = [...dlProtocols]
+    .sort((a, b) => (b.tvl_usd ?? 0) - (a.tvl_usd ?? 0))
+    .slice(0, 8);
+
+  const trackedStables = [...dlStables]
+    .sort((a, b) => (b.circulating_usd ?? 0) - (a.circulating_usd ?? 0))
+    .slice(0, 6);
+
   return (
     <>
       <div className="overview-header">
         <span className="overview-title">Market Overview</span>
         <span className="overview-refresh">
           Page rendered {new Date(now).toLocaleTimeString("en-US", { hour12: false })} UTC
-          &nbsp;·&nbsp; auto-refresh every 60s
+          &nbsp;·&nbsp; auto-refresh every 2m
         </span>
       </div>
       <GlobalMarketCard data={globalMarket} />
@@ -214,6 +248,104 @@ export default async function OverviewPage() {
         {sections.map((section) => (
           <MetricSection key={section.title} {...section} />
         ))}
+      </div>
+
+      {/* ── DefiLlama Market Intelligence ─────────────────────────────── */}
+      <div className="dl-section">
+        <div className="dl-section-header">
+          <span className="dl-section-title">DeFi Market Intelligence</span>
+          <span className="dl-badge">DefiLlama · free tier · no key</span>
+        </div>
+
+        {/* Market context summary cards */}
+        <div className="dl-context-cards">
+          <div className="dl-ctx-card">
+            <span className="dl-ctx-label">DEX Volume 24h</span>
+            <span className="dl-ctx-value">{dexTotal != null ? usd(dexTotal) : "—"}</span>
+          </div>
+          <div className="dl-ctx-card">
+            <span className="dl-ctx-label">Perp Open Interest</span>
+            <span className="dl-ctx-value">{oiTotal != null ? usd(oiTotal) : "—"}</span>
+          </div>
+          <div className="dl-ctx-card">
+            <span className="dl-ctx-label">Fees &amp; Revenue 24h</span>
+            <span className="dl-ctx-value">{feesTotal != null ? usd(feesTotal) : "—"}</span>
+          </div>
+        </div>
+
+        <div className="dl-grid">
+          {/* Top yield pools */}
+          <div className="dl-card">
+            <div className="dl-card-title">Top Yield Pools by APY</div>
+            <table className="dl-table">
+              <thead>
+                <tr><th>Protocol</th><th>Symbol</th><th>Chain</th><th>APY</th><th>TVL</th></tr>
+              </thead>
+              <tbody>
+                {topDLYields.length === 0 ? (
+                  <tr><td colSpan={5} className="dl-empty">No pool data — run ingestion first</td></tr>
+                ) : topDLYields.map((p) => (
+                  <tr key={p.pool_id}>
+                    <td>{p.project}</td>
+                    <td><span className="dl-symbol">{p.symbol}</span></td>
+                    <td>{p.chain}</td>
+                    <td className="dl-apy">{p.apy != null ? `${p.apy.toFixed(2)}%` : "—"}</td>
+                    <td>{p.tvl_usd != null ? usd(p.tvl_usd) : "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Protocol TVL */}
+          <div className="dl-card">
+            <div className="dl-card-title">Protocol TVL</div>
+            <table className="dl-table">
+              <thead>
+                <tr><th>Protocol</th><th>Category</th><th>TVL</th><th>24h Δ</th><th>7d Δ</th></tr>
+              </thead>
+              <tbody>
+                {topProtocols.length === 0 ? (
+                  <tr><td colSpan={5} className="dl-empty">No protocol data — run ingestion first</td></tr>
+                ) : topProtocols.map((p) => (
+                  <tr key={p.protocol_slug}>
+                    <td>{p.protocol_name}</td>
+                    <td>{p.category ?? "—"}</td>
+                    <td>{p.tvl_usd != null ? usd(p.tvl_usd) : "—"}</td>
+                    <td className={p.change_1d != null && p.change_1d >= 0 ? "dl-pos" : "dl-neg"}>
+                      {p.change_1d != null ? `${p.change_1d >= 0 ? "+" : ""}${p.change_1d.toFixed(1)}%` : "—"}
+                    </td>
+                    <td className={p.change_7d != null && p.change_7d >= 0 ? "dl-pos" : "dl-neg"}>
+                      {p.change_7d != null ? `${p.change_7d >= 0 ? "+" : ""}${p.change_7d.toFixed(1)}%` : "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Stablecoin supply */}
+          <div className="dl-card">
+            <div className="dl-card-title">Stablecoin Supply</div>
+            <table className="dl-table">
+              <thead>
+                <tr><th>Symbol</th><th>Circulating</th><th>Peg Type</th><th>Mechanism</th></tr>
+              </thead>
+              <tbody>
+                {trackedStables.length === 0 ? (
+                  <tr><td colSpan={4} className="dl-empty">No stablecoin data — run ingestion first</td></tr>
+                ) : trackedStables.map((s) => (
+                  <tr key={s.stablecoin_id}>
+                    <td><span className="dl-symbol">{s.symbol}</span></td>
+                    <td>{s.circulating_usd != null ? usd(s.circulating_usd) : "—"}</td>
+                    <td>{s.peg_type ?? "—"}</td>
+                    <td>{s.peg_mechanism ?? "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
       </div>
     </>
   );

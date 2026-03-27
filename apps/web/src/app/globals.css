@@ -1864,3 +1864,140 @@ details[open] .assumptions-summary::before { content: "▼  "; }
   display: flex;
   gap: 0.35rem;
 }
+
+/* ============================================================
+   DefiLlama Market Intelligence section
+   ============================================================ */
+
+.dl-section {
+  margin: 2rem 0 1rem;
+  padding: 0 1.25rem;
+}
+
+.dl-section-header {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.dl-section-title {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.dl-badge {
+  font-size: 0.68rem;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(99, 179, 237, 0.12);
+  color: #63b3ed;
+  letter-spacing: 0.03em;
+}
+
+/* Context summary cards */
+.dl-context-cards {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+  flex-wrap: wrap;
+}
+
+.dl-ctx-card {
+  flex: 1;
+  min-width: 160px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.9rem 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.dl-ctx-label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.dl-ctx-value {
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+/* Grid of cards */
+.dl-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  gap: 1rem;
+}
+
+.dl-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.dl-card-title {
+  padding: 0.65rem 1rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+}
+
+/* Table */
+.dl-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.78rem;
+}
+
+.dl-table thead th {
+  padding: 0.45rem 0.75rem;
+  text-align: left;
+  font-size: 0.66rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+}
+
+.dl-table tbody tr {
+  border-bottom: 1px solid var(--border);
+  transition: background 0.1s;
+}
+
+.dl-table tbody tr:last-child { border-bottom: none; }
+.dl-table tbody tr:hover { background: rgba(255,255,255,0.03); }
+
+.dl-table td {
+  padding: 0.42rem 0.75rem;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.dl-symbol {
+  font-weight: 600;
+  color: var(--accent, #63b3ed);
+}
+
+.dl-apy { color: #68d391; font-weight: 600; }
+.dl-pos { color: #68d391; }
+.dl-neg { color: #fc8181; }
+
+.dl-empty {
+  color: var(--text-muted);
+  font-style: italic;
+  padding: 1rem 0.75rem !important;
+}

@@ -170,8 +170,61 @@ All **core data** works with zero API keys via direct public REST:
 | Velo          | Broader derivatives history (3y) | Yes (`VELO_API_KEY`) |
 | CoinGecko Pro | Market caps, prices, global stats | Yes (`COINGECKO_API_KEY`) |
 
+## DefiLlama free-tier integration
+
+**Base URL**: `https://api.llama.fi` (main) · `https://yields.llama.fi` (pools) · `https://stablecoins.llama.fi` (stables)  
+**No API key required.** No `pro-api.llama.fi` endpoints are used.
+
+### Free endpoints used
+
+| Endpoint | Purpose |
+|----------|---------|
+| `yields.llama.fi/pools` | Yield pool snapshots |
+| `yields.llama.fi/chart/{pool_id}` | Daily APY/TVL history |
+| `api.llama.fi/protocols` | Protocol TVL list |
+| `api.llama.fi/protocol/{slug}` | Protocol detail + TVL breakdown |
+| `api.llama.fi/tvl/{slug}` | Single protocol TVL scalar |
+| `api.llama.fi/v2/chains` | Chain TVL snapshot |
+| `api.llama.fi/v2/historicalChainTvl/{chain}` | Daily chain TVL history |
+| `api.llama.fi/overview/dexs` | DEX volume overview |
+| `api.llama.fi/overview/open-interest` | Perp open-interest overview |
+| `api.llama.fi/overview/fees` | Fees & revenue overview |
+| `api.llama.fi/summary/dexs/{protocol}` | Single DEX volume detail |
+| `stablecoins.llama.fi/stablecoins` | Stablecoin supply snapshot |
+| `stablecoins.llama.fi/stablecoincharts/all` | Aggregate daily circulating history |
+| `stablecoins.llama.fi/stablecoin/{id}` | Single stablecoin detail |
+
+### Intentionally excluded (Pro-only)
+
+`/yields/poolsBorrow`, `/yields/chartLendBorrow`, `/yields/lsdRates`, `/yields/perps`,
+unlocks, token liquidity, active users — all require `pro-api.llama.fi`.
+
+### API endpoints added
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/defillama/yields` | Filtered yield pools by symbol/chain/project |
+| `GET /api/defillama/yields/{pool_id}/history` | Daily APY/TVL history for one pool |
+| `GET /api/defillama/protocols` | Protocol TVL snapshots |
+| `GET /api/defillama/protocols/{slug}` | Protocol detail (live) |
+| `GET /api/defillama/chains` | Chain TVL snapshot + history |
+| `GET /api/defillama/stablecoins` | Stablecoin supply context |
+| `GET /api/defillama/stablecoins/{id}` | Single stablecoin detail |
+| `GET /api/defillama/market-context` | DEX volume, OI, fees summaries |
+
+### DB tables added (migration 005)
+
+`defillama_yield_pool_snapshot`, `defillama_yield_pool_history`,
+`defillama_protocol_snapshot`, `defillama_chain_tvl_history`,
+`defillama_stablecoin_snapshot`, `defillama_stablecoin_history`,
+`defillama_market_context_snapshot`
+
+---
+
 ## Automatic data refresh
 
 On page load, the frontend triggers `POST /api/admin/refresh` to ensure live
-data is always shown. The API also runs scheduled background jobs every 5–15
-minutes via APScheduler.
+data is always shown. The API also runs scheduled background jobs:
+- Every 15 min: DeFiLlama lending/staking pool snapshots
+- Every 4 h: Extended DefiLlama pipeline (protocols, chains, stablecoins, market context)
+- Every 5–15 min: All other exchange and reference data

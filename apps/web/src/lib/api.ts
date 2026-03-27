@@ -290,3 +290,78 @@ export async function triggerIngest(): Promise<Record<string, unknown> | null> {
     return null;
   }
 }
+
+// ---------------------------------------------------------------------------
+// DefiLlama free-tier helpers
+// ---------------------------------------------------------------------------
+
+export interface DLYieldPool {
+  pool_id: string;
+  project: string;
+  chain: string;
+  symbol: string;
+  tvl_usd: number | null;
+  apy: number | null;
+  apy_base: number | null;
+  apy_reward: number | null;
+  stablecoin: boolean | null;
+  il_risk: string | null;
+  snapshot_at: string | null;
+  source: string;
+}
+
+export interface DLProtocol {
+  protocol_slug: string;
+  protocol_name: string;
+  category: string | null;
+  chain: string | null;
+  tvl_usd: number | null;
+  change_1d: number | null;
+  change_7d: number | null;
+  change_1m: number | null;
+  ts: string;
+  source: string;
+}
+
+export interface DLStablecoin {
+  stablecoin_id: string;
+  symbol: string;
+  circulating_usd: number | null;
+  peg_type: string | null;
+  peg_mechanism: string | null;
+  chains: Record<string, unknown> | null;
+  ts: string;
+  source: string;
+}
+
+export interface DLMarketContext {
+  source: string;
+  as_of: string;
+  context: {
+    dex_volume?: { aggregate: number | null; protocols: { protocol: string; value_24h: number | null }[] };
+    open_interest?: { aggregate: number | null; protocols: { protocol: string; value_24h: number | null }[] };
+    fees_revenue?: { aggregate: number | null; protocols: { protocol: string; value_24h: number | null }[] };
+  };
+}
+
+export async function fetchDLYields(
+  symbol?: string,
+  minTvl = 5_000_000,
+  limit = 20
+): Promise<DLYieldPool[]> {
+  const qs = new URLSearchParams({ min_tvl: String(minTvl), limit: String(limit) });
+  if (symbol) qs.set("symbol", symbol);
+  return (await apiFetch<DLYieldPool[]>(`/api/defillama/yields?${qs}`)) ?? [];
+}
+
+export async function fetchDLProtocols(): Promise<DLProtocol[]> {
+  return (await apiFetch<DLProtocol[]>("/api/defillama/protocols")) ?? [];
+}
+
+export async function fetchDLStablecoins(): Promise<DLStablecoin[]> {
+  return (await apiFetch<DLStablecoin[]>("/api/defillama/stablecoins")) ?? [];
+}
+
+export async function fetchDLMarketContext(): Promise<DLMarketContext | null> {
+  return apiFetch<DLMarketContext>("/api/defillama/market-context");
+}

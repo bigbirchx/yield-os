@@ -9,6 +9,7 @@ from app.routers import (
     admin,
     basis,
     borrow_demand,
+    defillama,
     derivatives,
     funding_history,
     funding_snapshot,
@@ -57,6 +58,7 @@ app.include_router(risk.router)
 app.include_router(staking.router)
 app.include_router(borrow_demand.router)
 app.include_router(route_optimizer.router)
+app.include_router(defillama.router)
 
 _scheduler: AsyncIOScheduler | None = None
 
@@ -81,6 +83,15 @@ async def on_startup() -> None:
         log.warning("velo_scheduler_skipped", reason="VELO_API_KEY not set")
 
     # DeFiLlama is public; schedule regardless of API key
+    # Extended job (pools + protocols + stablecoins + market context) runs every 4h
+    _scheduler.add_job(
+        _defillama_extended_job,
+        trigger=IntervalTrigger(seconds=14400),  # 4h
+        id="defillama_extended_ingestion",
+        replace_existing=True,
+        misfire_grace_time=300,
+    )
+    # Legacy lending/staking snapshot — keep fast 15-min cadence
     _scheduler.add_job(
         _defillama_job,
         trigger=IntervalTrigger(seconds=900),  # 15 min
@@ -140,6 +151,15 @@ async def _defillama_job() -> None:
     async with AsyncSessionLocal() as db:
         counts = await ingest_all(db)
     log.info("defillama_scheduled_run", counts=counts)
+
+
+async def _defillama_extended_job() -> None:
+    from app.core.database import AsyncSessionLocal
+    from app.services.defillama_ingestion import ingest_all_extended
+
+    async with AsyncSessionLocal() as db:
+        counts = await ingest_all_extended(db)
+    log.info("defillama_extended_scheduled_run", counts=counts)
 
 
 async def _internal_job() -> None:
