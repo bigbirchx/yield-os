@@ -25,10 +25,52 @@ function usd(v: number | null) {
   return `$${v.toFixed(0)}`;
 }
 
+/**
+ * Returns a human-readable market context string for a row.
+ *
+ * morpho_blue — isolated pair, market = "COLLATERAL/LOAN"
+ *               → display as "COLLATERAL → LOAN" (loan asset = symbol)
+ * kamino      — pool model, market = market name ("Main Market", "JLP Market")
+ *               → display market name directly
+ * aave / aave-v3 — pool model, market = deployment name
+ *               → display chain
+ * others      — display market name or "—"
+ */
+function marketContext(row: LendingMarket): string {
+  const { protocol, market, chain } = row;
+  if (protocol === "morpho_blue") {
+    const slash = market.indexOf("/");
+    if (slash > 0) {
+      const collateral = market.slice(0, slash);
+      const loan = market.slice(slash + 1);
+      return collateral === loan ? market : `${collateral} → ${loan}`;
+    }
+    return market;
+  }
+  if (protocol === "kamino") return market;
+  if (protocol === "aave" || protocol === "aave-v3") return chain ?? "Ethereum";
+  return market || "—";
+}
+
+/** Short human-readable protocol badge. */
+function protocolLabel(protocol: string): string {
+  if (protocol === "morpho_blue") return "Morpho";
+  if (protocol === "kamino") return "Kamino";
+  if (protocol === "aave" || protocol === "aave-v3") return "Aave";
+  return protocol;
+}
+
 const COLUMNS = [
   col.accessor("protocol", {
     header: "Protocol",
-    cell: (i) => <span className="cell-bold">{i.getValue()}</span>,
+    cell: (i) => (
+      <div>
+        <span className="cell-bold">{protocolLabel(i.getValue())}</span>
+        <div className="cell-dim" style={{ fontSize: "0.75em", marginTop: 1 }}>
+          {marketContext(i.row.original)}
+        </div>
+      </div>
+    ),
   }),
   col.accessor("chain", {
     header: "Chain",
