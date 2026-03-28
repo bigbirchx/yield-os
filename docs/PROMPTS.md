@@ -810,3 +810,332 @@ back to empty DataFrames / empty lists for every exchange.
 
 ### Commit
 `5e03e65` — fix(api,web): direct REST fallbacks + Deribit basis + live ingestion
+
+## Prompt 14 - DefiLlama Free APIs
+Use only official DefiLlama free endpoints from https://api.llama.fi. If you are tempted to use poolsBorrow, chartLendBorrow, lsdRates, perps, unlocks, or any endpoint that requires pro-api.llama.fi, stop and implement a free-tier-compatible fallback instead.
+Read these files first:
+- docs/PROJECT_BRIEF.md
+- docs/DATA_DICTIONARY.md
+- docs/SOURCE_MAP.md
+- docs/GIT_WORKFLOW.md
+
+We are integrating ONLY the publicly available FREE DefiLlama APIs into Yield OS.
+
+Critical constraint:
+- Use ONLY the free DefiLlama API base URL: https://api.llama.fi
+- Do NOT use pro-api.llama.fi
+- Do NOT require any DefiLlama API key
+- Do NOT implement any Pro-only endpoints
+- Assume this integration must work for a cost-effective MVP using only free/public DefiLlama endpoints
+
+Product intent:
+DefiLlama should serve as a broad DeFi market intelligence and historical context layer for:
+1. yield pool discovery and APY/TVL history
+2. protocol TVL and protocol-level historical context
+3. stablecoin supply and chain distribution context
+4. token price history fallback / enrichment
+5. DEX volume, open interest, and fees/revenue context
+
+It should NOT be used as the source of truth for:
+- protocol-native collateral parameters like LTV, liquidation thresholds, or borrow caps
+- quote-critical routing logic where protocol-native or venue-native data is better
+- any Pro-only DefiLlama datasets
+
+Free endpoints that are in scope:
+- /pools
+- /chart/{pool}
+- /protocols
+- /protocol/{protocol}
+- /tvl/{protocol}
+- /v2/chains
+- /v2/historicalChainTvl
+- /v2/historicalChainTvl/{chain}
+- /prices/current/{coins}
+- /prices/historical/{timestamp}/{coins}
+- /batchHistorical
+- /chart/{coins}
+- /percentage/{coins}
+- /prices/first/{coins}
+- /block/{chain}/{timestamp}
+- /stablecoins
+- /stablecoincharts/all
+- /stablecoincharts/{chain}
+- /stablecoin/{asset}
+- /stablecoinchains
+- /stablecoinprices
+- /overview/dexs
+- /overview/dexs/{chain}
+- /summary/dexs/{protocol}
+- /overview/open-interest
+- /overview/fees
+- /overview/fees/{chain}
+- /summary/fees/{protocol}
+
+Explicitly OUT OF SCOPE because they are Pro-only:
+- /yields/poolsBorrow
+- /yields/chartLendBorrow/{pool}
+- /yields/lsdRates
+- /yields/perps
+- unlocks, token liquidity, active users, and any pro-only data categories
+
+Implementation requirements:
+
+1) Environment/config
+- Add DEFI_LLAMA_BASE_URL with default https://api.llama.fi
+- Do NOT add a DefiLlama API key env var
+- Backend-only integration
+- Add sensible timeout and retry config
+
+2) Build a reusable DefiLlama client
+Create a backend client with:
+- typed request/response models where practical
+- timeout handling
+- retry logic with backoff for transient failures
+- structured logging
+- graceful handling of malformed or partial payloads
+- helper methods for all in-scope free endpoints listed above
+
+3) Database design
+Add the minimum MVP-quality tables needed.
+
+Suggested tables:
+- defillama_yield_pool_snapshot
+  - ts
+  - pool_id
+  - project
+  - chain
+  - symbol
+  - tvl_usd
+  - apy
+  - apy_base
+  - apy_reward
+  - stablecoin
+  - il_risk
+  - exposure
+  - predictions
+  - source_name
+  - raw
+- defillama_yield_pool_history
+  - ts
+  - pool_id
+  - apy
+  - tvl_usd
+  - source_name
+  - raw
+- defillama_protocol_snapshot
+  - ts
+  - protocol_slug
+  - protocol_name
+  - category
+  - chain
+  - tvl_usd
+  - change_1d
+  - change_7d
+  - change_1m
+  - source_name
+  - raw
+- defillama_chain_tvl_history
+  - ts
+  - chain
+  - tvl_usd
+  - source_name
+  - raw
+- defillama_stablecoin_snapshot
+  - ts
+  - stablecoin_id
+  - symbol
+  - circulating_usd
+  - chains
+  - peg_type
+  - source_name
+  - raw
+- defillama_stablecoin_history
+  - ts
+  - stablecoin_id
+  - chain optional
+  - circulating_usd
+  - source_name
+  - raw
+- defillama_market_context_snapshot
+  - ts
+  - context_type
+  - protocol_or_chain
+  - metric_name
+  - metric_value
+  - source_name
+  - raw
+
+Preserve raw payloads in JSON columns.
+Use source_name = 'defillama_free'.
+
+4) Ingestion jobs
+Implement jobs for:
+- periodic /pools snapshot ingestion
+- targeted /chart/{pool} history backfill for tracked yield pools
+- periodic protocol TVL snapshots from /protocols
+- targeted /protocol/{protocol} and /tvl/{protocol} enrichment for tracked protocols
+- chain TVL history refresh from /v2/historicalChainTvl and /v2/historicalChainTvl/{chain}
+- stablecoin ecosystem refresh from /stablecoins, /stablecoinchains, /stablecoincharts/*
+- optional price reference fallback from free coin price endpoints
+- DEX volume / open interest / fees-revenue market context refresh
+
+For MVP, focus coverage on:
+- BTC family
+- ETH family
+- SOL family
+- major USD stablecoins
+- protocols most relevant to Yield OS
+
+5) API endpoints
+Add these endpoints:
+- GET /api/defillama/yields
+- GET /api/defillama/yields/{pool_id}/history
+- GET /api/defillama/protocols
+- GET /api/defillama/protocols/{slug}
+- GET /api/defillama/chains
+- GET /api/defillama/stablecoins
+- GET /api/defillama/stablecoins/{asset}
+- GET /api/defillama/market-context
+
+Behavior:
+- /api/defillama/yields returns filtered current free yield pool data for tracked assets/chains/projects
+- /api/defillama/yields/{pool_id}/history returns APY/TVL history from /chart/{pool}
+- /api/defillama/protocols returns protocol TVL snapshot data relevant to tracked names
+- /api/defillama/protocols/{slug} returns protocol detail/history enrichment
+- /api/defillama/chains returns current and historical chain TVL context
+- /api/defillama/stablecoins returns stablecoin supply/distribution context
+- /api/defillama/market-context returns DEX volume, open interest, and fees summaries relevant to tracked markets
+
+6) Frontend integration
+Integrate free DefiLlama data where it materially improves the product:
+
+Market Overview:
+- top tracked yield pools by APY and TVL
+- protocol TVL context for tracked protocols
+- chain TVL trend cards
+- stablecoin ecosystem summary
+- DEX/open-interest/fees context cards
+
+Asset Cockpit:
+- show relevant free yield pools involving the asset
+- show protocol TVL context
+- show stablecoin supply context where applicable
+- show history charts where free data exists
+- clearly label DefiLlama as a source
+
+Do NOT misrepresent free DefiLlama data as:
+- protocol-native borrow caps
+- protocol-native collateral parameters
+- exact venue-native derivatives truth
+
+7) Product constraints
+- Keep implementation MVP-simple
+- Preserve source labels and freshness timestamps
+- Do not add unnecessary abstraction
+- Do not create fake mappings for Pro-only datasets
+- If a feature needs Pro-only endpoints, leave a clear TODO comment and return a graceful “not available in free tier” path instead of guessing
+
+8) Quality requirements
+- add tests with mocked DefiLlama free API responses
+- add migration(s) for new tables
+- add repository/service separation consistent with repo conventions
+- update README with:
+  - free API base URL
+  - no-auth design
+  - endpoints used
+  - what is intentionally excluded because it requires Pro
+
+9) Git workflow
+Follow docs/GIT_WORKFLOW.md.
+When complete:
+- stage only relevant files
+- create a conventional commit
+- include Task / Files / Reason / Tests in the commit body
+- report the commit hash
+
+Deliver:
+1. exact files changed
+2. migrations added
+3. new env vars
+4. new endpoints
+5. tests added
+6. concise explanation of design choices
+7. explicit note confirming no Pro-only DefiLlama endpoints were used
+### Commit
+`dfb1d58` — feat/fix: DeFiLlama integration, basis section, borrow rate wiring
+
+## Prompt 15 — Protocol-native borrow rates + Overview improvements
+
+Read docs/PROJECT_BRIEF.md, docs/SOURCE_MAP.md, docs/GIT_WORKFLOW.md.
+
+1. Wire current borrow-rate data from Aave, Kamino, and Morpho Blue into
+   the Borrow Rates page. Inspect each connector, identify gaps, complete
+   missing ingestion, store results, expose them via API, and render them
+   correctly in the frontend.
+
+2. On the Overview page add a minimum TVL filter defaulting to $5M.
+
+3. For market-based protocols (Morpho Blue, Kamino) display both assets in
+   the pair (e.g. "USDT — DSOL Kamino") so the loan/collateral context is
+   always visible. For vault data include the vault name.
+
+4. Make Min TVL ($5M default), Asset (USDC, USDT, ETH, SOL, BTC default),
+   and Min Availability (no filter default) changeable UI filters on the
+   Overview tab, governed as front-end configuration.
+
+5. Ensure every "source" label on the Overview page is accurate relative to
+   the actual data provenance.
+
+Follow docs/GIT_WORKFLOW.md.
+
+### Commits
+`b982184` — feat(lending): wire protocol-native borrow rates from Aave, Kamino, Morpho Blue
+`a39967f` — feat(lending): add TVL filter, market pair labels, and supply deduplication on Overview
+`6bec7d5` — feat(overview): interactive lending filters + accurate source labels
+
+## Prompt 16 — CoinGecko tier fix + CBBTC alias
+
+Read docs/GIT_WORKFLOW.md.
+
+1. Investigate why CoinGecko data is not feeding into the system. The
+   connector was using `pro-api.coingecko.com` with a Demo API key
+   (CG- prefix), which causes a 400 error. Fix the client to auto-detect
+   the key tier (Demo vs Pro vs free) and select the correct base URL and
+   auth header accordingly.
+
+2. Add CBBTC as a full BTC alias. Any dataset that tracks WBTC should also
+   track CBBTC. Update: coingecko_ingestion.py (TRACKED_ASSETS + _ASSET_TYPE),
+   lending router _DEFAULT_OVERVIEW_SYMBOLS, borrow_demand_loader _lending_symbols,
+   route_optimizer_loader _TRANSFORM_SOURCE_SYMBOLS + _TARGET_SYMBOLS.
+
+Follow docs/GIT_WORKFLOW.md.
+
+### Commits
+`d6d1bac` — fix(coingecko): use correct base URL and auth header for Demo API keys
+`669aaac` — feat(assets): add CBBTC to all BTC-family equivalence and tracking lists
+
+## Prompt 17 — Asset Lookup + Funding Rates Drawer
+
+Read docs/GIT_WORKFLOW.md.
+
+1. Add an "Asset Lookup" search box to the Overview page header. It should
+   accept any asset symbol, offer autocomplete from a known list, and on
+   submit open /assets/{SYMBOL} in a new browser tab.
+
+2. At the top of every asset page add a collapsed "Perpetual Funding Rates"
+   bar. When expanded it shows the full equivalent of the Funding Rates tab
+   scoped to that asset. Data should be lazily fetched — no network calls
+   while the drawer is collapsed. The symbol picker should be hidden since
+   the asset is already determined by the page context.
+
+3. Fix the KDE Distribution Metrics and Empirical Distribution Metrics
+   tables in the funding dashboard so their columns are always aligned.
+   The root cause was the "P50 (Median)" header making that column wider
+   than its counterpart in the KDE table. Fix: table-layout:fixed with
+   pinned column widths via nth-child CSS selectors on .fn-pct-table.
+
+Follow docs/GIT_WORKFLOW.md.
+
+### Commits
+`1e97cb9` — feat: asset lookup on overview + funding rates drawer on asset pages
+`5ffb24d` — fix: lock KDE and Empirical distribution table column widths to stay aligned

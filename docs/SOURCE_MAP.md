@@ -61,8 +61,13 @@
 
 | Data | Source | Key? |
 |------|--------|------|
-| Asset price, 24h volume, market cap | CoinGecko Pro | `COINGECKO_API_KEY` |
-| Global market stats (BTC dom, total cap) | CoinGecko Pro | `COINGECKO_API_KEY` |
+| Asset price, 24h volume, market cap | CoinGecko (Demo/Pro/Free auto-detected) | `COINGECKO_API_KEY` (optional) |
+| Global market stats (BTC dom, total cap) | CoinGecko (Demo/Pro/Free auto-detected) | `COINGECKO_API_KEY` (optional) |
+
+**CoinGecko key tier detection** — `coingecko_client.py` inspects the key prefix at startup:
+- No key → `api.coingecko.com`, no auth header (free public tier)
+- `CG-` prefix → `api.coingecko.com` + `x-cg-demo-api-key` (Demo tier)
+- Other → `pro-api.coingecko.com` + `x-cg-pro-api-key` (Pro tier)
 
 ## Derivatives Snapshot (DB)
 
@@ -71,6 +76,33 @@ Written to `derivatives_snapshots` table by:
 2. **Velo** (`velo_ingestion.py`) — broader cross-venue history, requires `VELO_API_KEY`
 
 The overview page (`/overview`) reads from this table.
+
+## Asset Alias Groups
+
+Assets with multiple on-chain representations are tracked together under a canonical symbol:
+
+| Canonical | Aliases tracked |
+|-----------|----------------|
+| BTC | BTC, WBTC, CBBTC, BTCB |
+| ETH | ETH, WETH |
+| SOL | SOL |
+| USDC | USDC |
+| USDT | USDT |
+| DAI | DAI |
+
+`SYMBOL_ALIASES` in `defillama_ingestion.py` governs DeFiLlama lookup expansion.
+`CBBTC` (`coinbase-wrapped-btc` on CoinGecko) is tracked individually in
+`coingecko_ingestion.py` alongside WBTC and included in `borrow_demand_loader`
+and `route_optimizer_loader` BTC equivalence groups.
+
+## Frontend UI Components
+
+| Component | Location | Purpose |
+|-----------|----------|---------|
+| `AssetLookup` | `components/overview/AssetLookup.tsx` | Search input on Overview page; opens `/assets/{SYMBOL}` in a new tab |
+| `LendingRateSections` | `components/overview/LendingRateSections.tsx` | Client-side interactive filters (Min TVL, Asset, Min Availability) for lending rate sections |
+| `FundingRatesDrawer` | `components/asset/FundingRatesDrawer.tsx` | Collapsible bar on asset pages; lazily loads full funding dashboard on first expand |
+| `FundingDashboard` | `components/funding/FundingDashboard.tsx` | Extracted reusable funding dashboard; accepts `initialSymbol` and `showSymbolPicker` props |
 
 ## Internal Reference Codebase (optional)
 
