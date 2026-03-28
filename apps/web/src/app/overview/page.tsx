@@ -1,5 +1,6 @@
 import { GlobalMarketCard } from "@/components/overview/GlobalMarketCard";
 import { MetricSection } from "@/components/overview/MetricSection";
+import { LendingRateSections } from "@/components/overview/LendingRateSections";
 import type { MetricRowData } from "@/components/overview/MetricRow";
 import {
   fetchDerivativesOverview,
@@ -64,126 +65,6 @@ function flattenDerivatives(data: DerivativesOverview[]): FlatDerivativesRow[] {
   );
 }
 
-/** Minimum TVL (USD) for a market to appear in the overview rate tables. */
-const MIN_TVL_USD = 5_000_000;
-
-/**
- * Build a descriptive sub-label for a lending market row.
- *
- * Protocol labelling conventions:
- *   morpho_blue  — isolated pair model: market field is "COLLATERAL/LOAN"
- *                  → show "morpho · {collateral} [loan: LOAN]"
- *   kamino       — pool model: market field is the market name
- *                  → show "kamino · {market name}"
- *   aave         — pool model: market field is the deployment name
- *                  → show "aave · {chain}"
- *   others       — show protocol name
- *
- * None of our current ingestion includes vault data.  If vault rows are ever
- * added they should carry protocol="morpho_vault" or similar so they're
- * distinguishable here.
- */
-function lendingSubLabel(r: FlatLendingRow): string {
-  const { protocol, market, chain } = r;
-
-  if (protocol === "morpho_blue") {
-    // market format: "{collateral}/{loan}" e.g. "sUSN/USDC"
-    const slash = market.indexOf("/");
-    if (slash > 0) {
-      const collateral = market.slice(0, slash);
-      const loan = market.slice(slash + 1);
-      // Only show "collateral [loan]" when collateral ≠ loan (avoids e.g. "USDT/USDT")
-      return collateral === loan
-        ? `morpho · ${market}`
-        : `morpho · ${collateral} → ${loan}`;
-    }
-    return `morpho · ${market}`;
-  }
-
-  if (protocol === "kamino") {
-    return `kamino · ${market}`;
-  }
-
-  if (protocol === "aave" || protocol === "aave-v3") {
-    // market field is the deployment name ("AaveV3Ethereum") — chain is cleaner
-    return `aave · ${chain ?? "Ethereum"}`;
-  }
-
-  return protocol;
-}
-
-function topBorrowRates(lending: FlatLendingRow[], n = 8): MetricRowData[] {
-  // Deduplicate same-label markets — keep highest borrow APY
-  const seen = new Map<string, FlatLendingRow>();
-  for (const r of lending) {
-    const key = `${r.asset}::${lendingSubLabel(r)}`;
-    const prev = seen.get(key);
-    if (!prev || (r.borrow_apy ?? 0) > (prev.borrow_apy ?? 0)) {
-      seen.set(key, r);
-    }
-  }
-
-  return [...seen.values()]
-    .filter((r) => {
-      if (r.borrow_apy == null || r.borrow_apy <= 0) return false;
-      // Minimum TVL guard — skip tiny/illiquid markets
-      if (r.tvl_usd != null && r.tvl_usd < MIN_TVL_USD) return false;
-      // Skip fully-drained markets (100% utilized, no available liquidity)
-      const hasLiquidity =
-        r.available_liquidity_usd == null || r.available_liquidity_usd > 1000;
-      const notFullyUtilized =
-        r.utilization == null || r.utilization < 0.999;
-      return hasLiquidity || notFullyUtilized;
-    })
-    .sort((a, b) => (b.borrow_apy ?? 0) - (a.borrow_apy ?? 0))
-    .slice(0, n)
-    .map((r, i) => ({
-      rank: i + 1,
-      asset: r.asset,
-      subLabel: lendingSubLabel(r),
-      chain: r.chain,
-      value: pct(r.borrow_apy),
-      valueSub: r.reward_borrow_apy ? `-${pct(r.reward_borrow_apy)} reward` : undefined,
-      valueColor: "red",
-      snapshotAt: r.snapshot_at,
-      href: `/assets/${r.asset}`,
-    }));
-}
-
-function topLendRates(lending: FlatLendingRow[], n = 8): MetricRowData[] {
-  // Deduplicate: if multiple Morpho markets share the same collateral/loan label
-  // (different LLTVs), keep only the one with the highest supply APY.
-  const seen = new Map<string, FlatLendingRow>();
-  for (const r of lending) {
-    const key = `${r.asset}::${lendingSubLabel(r)}`;
-    const prev = seen.get(key);
-    if (!prev || (r.supply_apy ?? 0) > (prev.supply_apy ?? 0)) {
-      seen.set(key, r);
-    }
-  }
-
-  return [...seen.values()]
-    .filter((r) => {
-      if (r.supply_apy == null || r.supply_apy <= 0) return false;
-      if (r.tvl_usd != null && r.tvl_usd < MIN_TVL_USD) return false;
-      // Skip 100%-utilized markets — supply is trapped
-      const notFullyUtilized = r.utilization == null || r.utilization < 0.999;
-      return notFullyUtilized;
-    })
-    .sort((a, b) => (b.supply_apy ?? 0) - (a.supply_apy ?? 0))
-    .slice(0, n)
-    .map((r, i) => ({
-      rank: i + 1,
-      asset: r.asset,
-      subLabel: lendingSubLabel(r),
-      chain: r.chain,
-      value: pct(r.supply_apy),
-      valueSub: r.reward_supply_apy ? `+${pct(r.reward_supply_apy)} reward` : undefined,
-      valueColor: "green",
-      snapshotAt: r.snapshot_at,
-      href: `/assets/${r.asset}`,
-    }));
-}
 
 function topFunding(derivatives: FlatDerivativesRow[], n = 8): MetricRowData[] {
   return derivatives
@@ -237,27 +118,6 @@ function topBasisFromSnapshots(
     .map((r, i) => ({ ...r, rank: i + 1 }));
 }
 
-function capacityConstraints(lending: FlatLendingRow[], n = 8): MetricRowData[] {
-  // Highest utilization = tightest capacity constraint
-  return lending
-    .filter((r) => r.utilization != null)
-    .sort((a, b) => (b.utilization ?? 0) - (a.utilization ?? 0))
-    .slice(0, n)
-    .map((r, i) => ({
-      rank: i + 1,
-      asset: r.asset,
-      subLabel: `${r.protocol}`,
-      chain: r.chain,
-      value: pct((r.utilization ?? 0) * 100, 1),
-      valueSub: r.available_liquidity_usd != null
-        ? `avail ${usd(r.available_liquidity_usd)}`
-        : undefined,
-      valueColor: (r.utilization ?? 0) > 0.9 ? "red" : "orange",
-      snapshotAt: r.snapshot_at,
-      href: `/assets/${r.asset}`,
-    }));
-}
-
 // -----------------------------------------------------------------------
 // Page
 // -----------------------------------------------------------------------
@@ -276,7 +136,7 @@ export default async function OverviewPage() {
     dlMarket,
   ] = await Promise.all([
     fetchDerivativesOverview(["BTC", "ETH", "SOL"]),
-    fetchLendingOverview(["USDC", "USDT", "ETH", "WBTC", "SOL", "DAI"]),
+    fetchLendingOverview(["BTC", "ETH", "USDC", "USDT", "SOL", "DAI"]),
     fetchGlobalMarket(),
     fetchBasisSnapshot("BTC"),
     fetchBasisSnapshot("ETH"),
@@ -293,25 +153,12 @@ export default async function OverviewPage() {
 
   const now = new Date().toISOString();
 
-  const sections = [
-    {
-      title: "Top Borrow Rates",
-      titleColor: "red" as const,
-      source: "Aave · Kamino · Morpho",
-      rows: topBorrowRates(lending),
-      emptyMessage: "No borrow data — run ingestion first",
-    },
-    {
-      title: "Top Lend Rates",
-      titleColor: "green" as const,
-      source: "DeFiLlama",
-      rows: topLendRates(lending),
-      emptyMessage: "No supply data — run ingestion first",
-    },
+  /** Funding + Basis: non-lending sections shown as a static 2-col grid. */
+  const staticSections = [
     {
       title: "Highest Funding",
       titleColor: "yellow" as const,
-      source: "Internal / Velo",
+      source: "Binance · OKX",
       rows: topFunding(derivatives),
       emptyMessage: "Funding data loading — check the Funding page for live rates",
     },
@@ -321,13 +168,6 @@ export default async function OverviewPage() {
       source: "Deribit · Bybit",
       rows: basisRows,
       emptyMessage: "No basis data — check the Basis page for live term structure",
-    },
-    {
-      title: "Capacity Constraints",
-      titleColor: "orange" as const,
-      source: "DeFiLlama",
-      rows: capacityConstraints(lending),
-      emptyMessage: "No utilization data — run ingestion first",
     },
   ];
 
@@ -358,8 +198,13 @@ export default async function OverviewPage() {
         </span>
       </div>
       <GlobalMarketCard data={globalMarket} />
-      <div className="overview-grid">
-        {sections.map((section) => (
+
+      {/* Lending rate sections with interactive filters */}
+      <LendingRateSections lending={lending} />
+
+      {/* Static sections: Funding + Basis in a 2-col row */}
+      <div className="overview-grid" style={{ gridTemplateColumns: "repeat(2, 1fr)" }}>
+        {staticSections.map((section) => (
           <MetricSection key={section.title} {...section} />
         ))}
       </div>
