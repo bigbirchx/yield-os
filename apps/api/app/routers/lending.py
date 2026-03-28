@@ -12,7 +12,7 @@ from app.services.defillama_ingestion import SYMBOL_ALIASES, TRACKED_LENDING_SYM
 
 router = APIRouter(tags=["lending"])
 
-_DEFAULT_OVERVIEW_SYMBOLS = ["USDC", "USDT", "ETH", "WBTC", "SOL"]
+_DEFAULT_OVERVIEW_SYMBOLS = ["USDC", "USDT", "ETH", "WBTC", "CBBTC", "SOL"]
 
 
 # ---------------------------------------------------------------------------

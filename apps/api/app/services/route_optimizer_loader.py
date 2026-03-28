@@ -141,8 +141,9 @@ _TRANSFORM_SOURCE_SYMBOLS: dict[str, list[str]] = {
     "stETH":   ["ETH", "WETH"],
     "wstETH":  ["ETH", "WETH"],
     "ETH":     ["stETH", "wstETH"],
-    "WBTC":    ["BTC", "WBTC"],
-    "BTC":     ["WBTC"],
+    "WBTC":    ["BTC", "WBTC", "CBBTC"],
+    "CBBTC":   ["BTC", "WBTC", "CBBTC"],
+    "BTC":     ["WBTC", "CBBTC"],
     "mSOL":    ["SOL"],
     "JitoSOL": ["SOL"],
     "SOL":     ["mSOL", "JitoSOL"],
@@ -150,8 +151,9 @@ _TRANSFORM_SOURCE_SYMBOLS: dict[str, list[str]] = {
 
 # Top-level asset → DeFiLlama symbols (same as borrow_demand_loader)
 _TARGET_SYMBOLS: dict[str, list[str]] = {
-    "BTC":    ["WBTC", "BTC", "BTCB"],
-    "WBTC":   ["WBTC"],
+    "BTC":    ["WBTC", "CBBTC", "BTC", "BTCB"],
+    "WBTC":   ["WBTC", "CBBTC"],
+    "CBBTC":  ["CBBTC", "WBTC"],
     "ETH":    ["ETH", "WETH"],
     "stETH":  ["stETH"],
     "wstETH": ["wstETH"],

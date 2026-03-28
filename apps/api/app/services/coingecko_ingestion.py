@@ -9,7 +9,7 @@ Jobs:
 
 Tracked assets
 --------------
-  BTC family  : BTC, WBTC
+  BTC family  : BTC, WBTC, CBBTC
   ETH family  : ETH, WETH, stETH, wstETH, rETH
   SOL family  : SOL
   Stablecoins : USDC, USDT, DAI, PYUSD
@@ -38,8 +38,9 @@ SOURCE = "coingecko"
 # symbol → coingecko_id mapping for all tracked Yield OS assets
 TRACKED_ASSETS: dict[str, str] = {
     # BTC family
-    "BTC": "bitcoin",
-    "WBTC": "wrapped-bitcoin",
+    "BTC":   "bitcoin",
+    "WBTC":  "wrapped-bitcoin",
+    "CBBTC": "coinbase-wrapped-btc",
     # ETH family
     "ETH": "ethereum",
     "WETH": "weth",
@@ -60,11 +61,12 @@ _ID_TO_SYMBOL: dict[str, str] = {v: k for k, v in TRACKED_ASSETS.items()}
 
 # Asset type classification
 _ASSET_TYPE: dict[str, str] = {
-    "BTC": "crypto",
-    "ETH": "crypto",
-    "SOL": "crypto",
-    "WBTC": "wrapper",
-    "WETH": "wrapper",
+    "BTC":   "crypto",
+    "ETH":   "crypto",
+    "SOL":   "crypto",
+    "WBTC":  "wrapper",
+    "CBBTC": "wrapper",
+    "WETH":  "wrapper",
     "stETH": "lst",
     "wstETH": "lst",
     "rETH": "lst",

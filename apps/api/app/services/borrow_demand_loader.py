@@ -189,7 +189,7 @@ async def load_inputs(
 def _lending_symbols(symbol: str) -> list[str]:
     """Map a top-level asset to the set of DeFiLlama symbols for its lending markets."""
     _MAP: dict[str, list[str]] = {
-        "BTC":  ["WBTC", "BTC", "BTCB"],
+        "BTC":  ["WBTC", "CBBTC", "BTC", "BTCB"],
         "ETH":  ["ETH", "WETH", "stETH", "wstETH"],
         "SOL":  ["SOL", "mSOL", "JitoSOL"],
         "USDC": ["USDC"],
