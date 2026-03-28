@@ -1,23 +1,28 @@
 """
-CoinGecko Pro API client.
+CoinGecko API client (Demo / Pro / free-public).
 
 Used as the canonical MARKET REFERENCE and ASSET METADATA layer for Yield OS.
 It is NOT the source of truth for protocol-native lending parameters, LTVs,
 or derivatives routing — those come from DeFiLlama, Aave, Morpho, Kamino,
 and Velo respectively.
 
-Auth
-----
-  If COINGECKO_API_KEY is set  → Pro endpoint (pro-api.coingecko.com)
-                                  with x-cg-pro-api-key header.
-  If not set                   → Public endpoint (api.coingecko.com)
-                                  with no auth header (free tier).
+Auth tiers (auto-detected from the key prefix)
+-----------------------------------------------
+  Key starts with "CG-"  → Demo key
+                            Base URL : https://api.coingecko.com/api/v3
+                            Header   : x-cg-demo-api-key
+  Any other non-empty key → Pro key
+                            Base URL : https://pro-api.coingecko.com/api/v3
+                            Header   : x-cg-pro-api-key
+  No key set             → Free public tier
+                            Base URL : https://api.coingecko.com/api/v3
+                            No auth header
 
 Retry
 -----
   tenacity: 3 attempts, exponential backoff 1s…10s.
   Retries on: 429 (rate limit), 500/502/503/504 (transient).
-  Does NOT retry on 401/403 (auth error) — raises immediately.
+  Does NOT retry on 400/401/403 — raises immediately.
 """
 from __future__ import annotations
 
@@ -37,7 +42,7 @@ from app.core.config import settings
 
 log = structlog.get_logger(__name__)
 
-_PRO_BASE = "https://pro-api.coingecko.com/api/v3"
+_PRO_BASE  = "https://pro-api.coingecko.com/api/v3"
 _FREE_BASE = "https://api.coingecko.com/api/v3"
 _TIMEOUT = 10.0
 _MAX_RETRIES = 3
@@ -49,19 +54,38 @@ def _should_retry(exc: BaseException) -> bool:
     return isinstance(exc, (httpx.TimeoutException, httpx.ConnectError))
 
 
+def _is_demo_key(key: str) -> bool:
+    """Demo keys are issued by CoinGecko starting with 'CG-'."""
+    return key.startswith("CG-")
+
+
 class CoinGeckoClient:
     """
     Async CoinGecko client.  Instantiate once and reuse.
-    Uses the Pro endpoint when COINGECKO_API_KEY is configured,
-    otherwise falls back to the free public endpoint.
+
+    Key-tier detection (automatic, no config change needed):
+      CG-xxxx  → Demo  → api.coingecko.com + x-cg-demo-api-key
+      other    → Pro   → pro-api.coingecko.com + x-cg-pro-api-key
+      (none)   → Free  → api.coingecko.com, no header
     """
 
     def __init__(self) -> None:
         self._api_key = settings.coingecko_api_key
-        self._base = _PRO_BASE if self._api_key else _FREE_BASE
         self._headers: dict[str, str] = {}
-        if self._api_key:
+
+        if not self._api_key:
+            self._base = _FREE_BASE
+            self._tier = "free"
+        elif _is_demo_key(self._api_key):
+            self._base = _FREE_BASE          # Demo uses the public base URL
+            self._headers["x-cg-demo-api-key"] = self._api_key
+            self._tier = "demo"
+        else:
+            self._base = _PRO_BASE
             self._headers["x-cg-pro-api-key"] = self._api_key
+            self._tier = "pro"
+
+        log.info("coingecko_client_init", tier=self._tier, base=self._base)
 
     async def _get(self, path: str, params: dict | None = None) -> Any:
         """Execute a GET with retry/backoff.  Raises on unrecoverable errors."""

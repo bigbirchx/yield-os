@@ -34,7 +34,10 @@ class Settings(BaseSettings):
     # CoinGecko: Pro key lifts rate limits and unlocks /simple/price bulk endpoint
     # Free tier (no key) works for low-volume dev use
     coingecko_api_key: str = ""
-    coingecko_api_url: str = "https://pro-api.coingecko.com/api/v3"
+    # Informational only — the client auto-selects the correct base URL
+    # based on key prefix: CG-xxxx = Demo (api.coingecko.com),
+    # other = Pro (pro-api.coingecko.com), empty = free public.
+    coingecko_api_url: str = "https://api.coingecko.com/api/v3"
 
     # Bullish exchange — credentials from .env
     # Public/private key pair from Bullish institutional portal
