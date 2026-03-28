@@ -108,7 +108,7 @@ export default async function AssetPage({ params }: PageProps) {
       {/* ── Lending markets ────────────────────────────────────── */}
       <SectionCard
         title="Lending Markets"
-        source="DeFiLlama"
+        source="Aave · Kamino · Morpho · DeFiLlama"
         empty={lendingMarkets.length === 0}
         emptyMessage="No lending data available"
       >

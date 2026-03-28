@@ -132,6 +132,16 @@ async def on_startup() -> None:
     )
     log.info("coingecko_usage_scheduler_registered")
 
+    # Protocol-native borrow rates (Aave, Kamino, Morpho Blue) — every 15 min.
+    _scheduler.add_job(
+        _borrow_rate_job,
+        trigger=IntervalTrigger(seconds=900),
+        id="borrow_rate_ingestion",
+        replace_existing=True,
+        misfire_grace_time=120,
+    )
+    log.info("borrow_rate_scheduler_registered")
+
     _scheduler.start()
 
 
@@ -187,6 +197,15 @@ async def _coingecko_usage_job() -> None:
     async with AsyncSessionLocal() as db:
         stored = await ingest_api_usage(db)
     log.info("coingecko_usage_run", stored=stored)
+
+
+async def _borrow_rate_job() -> None:
+    from app.core.database import AsyncSessionLocal
+    from app.services.lending_rate_ingestion import ingest_all_borrow_rates
+
+    async with AsyncSessionLocal() as db:
+        counts = await ingest_all_borrow_rates(db)
+    log.info("borrow_rate_scheduled_run", counts=counts)
 
 
 @app.on_event("shutdown")

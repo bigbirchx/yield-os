@@ -1,5 +1,6 @@
 """
-Morpho Blue connector — reads market risk parameters via the public GraphQL API.
+Morpho Blue connector — reads market risk parameters and borrow rates via the
+public GraphQL API.
 
 Endpoint: https://blue-api.morpho.org/graphql  (no API key required)
 
@@ -8,12 +9,15 @@ Field mapping (Morpho raw → normalized):
     (Morpho has one LTV: the LLTV at which liquidation triggers; there is no
      separate "max LTV". For routing purposes we set max_ltv = lltv * 0.95
      as a conservative collateral factor.)
-  loanToken.symbol                         → debt_asset
-  collateralToken.symbol                   → asset (collateral)
+  loanAsset.symbol                         → loan_asset (debt token)
+  collateralAsset.symbol                   → asset (collateral)
   uniqueKey                                → market_address
-  state.liquidityAssetsUsd                 → available_capacity_native (USD)
-  state.supplyAssetsUsd                    → supply cap proxy
-  state.borrowAssetsUsd                    → borrow cap proxy
+  state.liquidityAssetsUsd                 → available_liquidity_usd
+  state.supplyAssetsUsd                    → total_supply_usd
+  state.borrowAssetsUsd                    → total_borrow_usd
+  state.borrowApy                          → borrow_apy  (decimal, e.g. 0.05 = 5%)
+  state.supplyApy                          → supply_apy
+  state.utilization                        → utilization (0–1)
 
 Note: Morpho Blue is an isolated-pair model. Each market has exactly one
 collateral token and one loan (debt) token. There are no global supply/borrow
@@ -36,7 +40,12 @@ _RETRIES = 3
 
 _MARKETS_QUERY = """
 {
-  markets(first: 200, orderBy: SupplyAssetsUsd, orderDirection: Desc) {
+  markets(
+    first: 200,
+    orderBy: BorrowAssetsUsd,
+    orderDirection: Desc,
+    where: { borrowApy_lte: 5 }
+  ) {
     items {
       uniqueKey
       lltv
@@ -57,6 +66,9 @@ _MARKETS_QUERY = """
         supplyAssetsUsd
         borrowAssetsUsd
         liquidityAssetsUsd
+        borrowApy
+        supplyApy
+        utilization
       }
     }
   }
@@ -79,6 +91,9 @@ class MorphoMarketState(BaseModel):
     supply_assets_usd: float | None = Field(None, alias="supplyAssetsUsd")
     borrow_assets_usd: float | None = Field(None, alias="borrowAssetsUsd")
     liquidity_assets_usd: float | None = Field(None, alias="liquidityAssetsUsd")
+    borrow_apy: float | None = Field(None, alias="borrowApy")
+    supply_apy: float | None = Field(None, alias="supplyApy")
+    utilization: float | None = Field(None, alias="utilization")
 
     model_config = {"extra": "allow", "populate_by_name": True}
 
@@ -106,6 +121,37 @@ class MorphoMarket(BaseModel):
     @property
     def available_capacity_usd(self) -> float | None:
         return self.state.liquidity_assets_usd if self.state else None
+
+    @property
+    def borrow_apy(self) -> float | None:
+        """Borrow APY as a decimal fraction (e.g. 0.05 = 5%).
+
+        Morpho Blue returns APY as decimal fractions, same as Aave and Kamino.
+        The GraphQL query already filters borrowApy_lte:5 (500% max at source).
+        """
+        if self.state and self.state.borrow_apy is not None:
+            val = self.state.borrow_apy
+            return val if val < 5.0 else None
+        return None
+
+    @property
+    def supply_apy(self) -> float | None:
+        if self.state and self.state.supply_apy is not None:
+            val = self.state.supply_apy
+            return val if val < 5.0 else None
+        return None
+
+    @property
+    def utilization(self) -> float | None:
+        return self.state.utilization if self.state else None
+
+    @property
+    def total_supply_usd(self) -> float | None:
+        return self.state.supply_assets_usd if self.state else None
+
+    @property
+    def total_borrow_usd(self) -> float | None:
+        return self.state.borrow_assets_usd if self.state else None
 
 
 def _retry():

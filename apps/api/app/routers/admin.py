@@ -285,7 +285,21 @@ async def trigger_ingest(db: AsyncSession = Depends(get_db)) -> IngestResult:
         log.warning("admin_ingest_internal_error", error=str(exc))
         internal_counts = {"error": str(exc)}
 
-    log.info("admin_ingest_complete", defillama=defillama_counts, aave=aave_counts)
+    # Protocol-native borrow rates (Aave, Kamino, Morpho Blue) → lending_market_snapshots
+    borrow_rate_counts: dict = {}
+    try:
+        from app.services.lending_rate_ingestion import ingest_all_borrow_rates
+        borrow_rate_counts = await ingest_all_borrow_rates(db)
+    except Exception as exc:
+        log.error("admin_ingest_borrow_rates_error", error=str(exc))
+        borrow_rate_counts = {"error": str(exc)}
+
+    log.info(
+        "admin_ingest_complete",
+        defillama=defillama_counts,
+        aave=aave_counts,
+        borrow_rates=borrow_rate_counts,
+    )
     return IngestResult(
         triggered_at=now,
         defillama=defillama_counts,

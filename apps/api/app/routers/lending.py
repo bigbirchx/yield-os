@@ -80,13 +80,29 @@ async def lending_overview(
     """
     Returns the latest lending market snapshot per (symbol, protocol, market).
 
-    Source: DeFiLlama yields API
-    """
-    rows = await get_latest_per_market(db, symbols)
+    Expands symbol aliases (e.g. ETH -> ETH, WETH) so protocol-native rows that
+    store "WETH" are returned when the caller queries "ETH".
 
-    grouped: dict[str, list[LendingMarketOut]] = {s.upper(): [] for s in symbols}
+    Sources: protocol-native connectors (Aave, Kamino, Morpho Blue) + DeFiLlama
+    """
+    symbols_upper = [s.upper() for s in symbols]
+
+    # Build the full lookup set including aliases
+    lookup_set: set[str] = set()
+    canonical_map: dict[str, str] = {}  # db_symbol -> canonical query symbol
+    for sym in symbols_upper:
+        aliases = SYMBOL_ALIASES.get(sym, [sym])
+        for alias in aliases:
+            lookup_set.add(alias)
+            canonical_map[alias] = sym
+
+    rows = await get_latest_per_market(db, list(lookup_set))
+
+    grouped: dict[str, list[LendingMarketOut]] = {s: [] for s in symbols_upper}
     for row in rows:
-        grouped.setdefault(row.symbol, []).append(LendingMarketOut.model_validate(row))
+        canonical = canonical_map.get(row.symbol.upper(), row.symbol.upper())
+        if canonical in grouped:
+            grouped[canonical].append(LendingMarketOut.model_validate(row))
 
     return [
         LendingOverviewSymbol(symbol=sym, markets=markets)

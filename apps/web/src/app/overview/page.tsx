@@ -66,7 +66,16 @@ function flattenDerivatives(data: DerivativesOverview[]): FlatDerivativesRow[] {
 
 function topBorrowRates(lending: FlatLendingRow[], n = 8): MetricRowData[] {
   return lending
-    .filter((r) => r.borrow_apy != null && r.borrow_apy > 0)
+    .filter((r) => {
+      if (r.borrow_apy == null || r.borrow_apy <= 0) return false;
+      // Skip fully-drained markets (100% utilized with no available liquidity)
+      // to only show actionable borrow opportunities.
+      const hasLiquidity =
+        r.available_liquidity_usd == null || r.available_liquidity_usd > 1000;
+      const notFullyUtilized =
+        r.utilization == null || r.utilization < 0.999;
+      return hasLiquidity || notFullyUtilized;
+    })
     .sort((a, b) => (b.borrow_apy ?? 0) - (a.borrow_apy ?? 0))
     .slice(0, n)
     .map((r, i) => ({
@@ -212,7 +221,7 @@ export default async function OverviewPage() {
     {
       title: "Top Borrow Rates",
       titleColor: "red" as const,
-      source: "DeFiLlama",
+      source: "Aave · Kamino · Morpho",
       rows: topBorrowRates(lending),
       emptyMessage: "No borrow data — run ingestion first",
     },
