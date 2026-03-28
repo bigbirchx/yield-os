@@ -2075,3 +2075,201 @@ details[open] .assumptions-summary::before { content: "▼  "; }
   font-style: italic;
   padding: 1rem 0.75rem !important;
 }
+
+/* -----------------------------------------------------------------------
+   Overview header right-side cluster (AssetLookup + refresh ts)
+----------------------------------------------------------------------- */
+.overview-header {
+  align-items: center;
+}
+
+.overview-header-right {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+}
+
+/* -----------------------------------------------------------------------
+   AssetLookup — search box on Overview page
+----------------------------------------------------------------------- */
+.al-wrapper {
+  position: relative;
+}
+
+.al-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.al-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+
+.al-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.al-input-wrap {
+  position: relative;
+}
+
+.al-input {
+  background: var(--surface-2, #1a1a2e);
+  border: 1px solid var(--border, #2a2a40);
+  border-radius: 4px;
+  color: var(--text-primary, #e2e8f0);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 0.35rem 0.6rem;
+  width: 140px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.al-input:focus {
+  border-color: var(--accent, #63b3ed);
+}
+
+.al-input::placeholder {
+  color: var(--text-muted);
+}
+
+.al-suggestions {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  right: 0;
+  background: var(--surface-2, #1a1a2e);
+  border: 1px solid var(--border, #2a2a40);
+  border-radius: 4px;
+  list-style: none;
+  margin: 0;
+  padding: 0.25rem 0;
+  z-index: 50;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+}
+
+.al-suggestion-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 0.3rem 0.6rem;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-primary, #e2e8f0);
+  cursor: pointer;
+}
+
+.al-suggestion-item:hover {
+  background: var(--surface-3, #252540);
+  color: var(--accent, #63b3ed);
+}
+
+.al-btn {
+  background: var(--surface-2, #1a1a2e);
+  border: 1px solid var(--border, #2a2a40);
+  border-radius: 4px;
+  color: var(--accent, #63b3ed);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 0.35rem 0.7rem;
+  white-space: nowrap;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.al-btn:hover {
+  background: var(--surface-3, #252540);
+  border-color: var(--accent, #63b3ed);
+}
+
+.al-error {
+  font-size: 10px;
+  color: var(--red, #fc8181);
+}
+
+/* -----------------------------------------------------------------------
+   FundingRatesDrawer — collapsible section on asset pages
+----------------------------------------------------------------------- */
+.frd-wrapper {
+  border: 1px solid var(--border, #2a2a40);
+  border-radius: 6px;
+  margin-bottom: 1.25rem;
+  overflow: hidden;
+}
+
+.frd-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  background: var(--surface-2, #1a1a2e);
+  border: none;
+  cursor: pointer;
+  padding: 0.75rem 1rem;
+  text-align: left;
+  transition: background 0.15s;
+}
+
+.frd-header:hover {
+  background: var(--surface-3, #252540);
+}
+
+.frd-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary, #a0aec0);
+  text-transform: uppercase;
+}
+
+.frd-icon {
+  font-size: 14px;
+}
+
+.frd-sub {
+  font-weight: 400;
+  color: var(--text-muted);
+  font-size: 11px;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.frd-chevron {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.frd-body {
+  display: none;
+  padding: 0;
+}
+
+.frd-body--open {
+  display: block;
+  border-top: 1px solid var(--border, #2a2a40);
+}
+
+.frd-body--open .fn-page {
+  padding: 1rem;
+  margin: 0;
+}
+
+.frd-loading {
+  color: var(--text-muted);
+  font-size: 12px;
+  padding: 1.5rem 1rem;
+}

@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 
 import { BorrowDemandCard } from "@/components/asset/BorrowDemandCard";
+import { FundingRatesDrawer } from "@/components/asset/FundingRatesDrawer";
 import { MarketContextCard } from "@/components/asset/MarketContextCard";
 import { RouteOptimizerCard } from "@/components/asset/RouteOptimizerCard";
 import { DerivativesTable } from "@/components/asset/DerivativesTable";
@@ -99,6 +100,9 @@ export default async function AssetPage({ params }: PageProps) {
           )}
         </div>
       </header>
+
+      {/* ── Perpetual funding rates (collapsed by default) ─────── */}
+      <FundingRatesDrawer symbol={sym} />
 
       {/* ── CoinGecko market context ───────────────────────────── */}
       {(cgAsset?.market || cgHistory?.series?.length) ? (

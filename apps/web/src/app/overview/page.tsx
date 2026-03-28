@@ -1,6 +1,7 @@
 import { GlobalMarketCard } from "@/components/overview/GlobalMarketCard";
 import { MetricSection } from "@/components/overview/MetricSection";
 import { LendingRateSections } from "@/components/overview/LendingRateSections";
+import { AssetLookup } from "@/components/overview/AssetLookup";
 import type { MetricRowData } from "@/components/overview/MetricRow";
 import {
   fetchDerivativesOverview,
@@ -91,7 +92,7 @@ function topBasisFromSnapshots(
   snapshots: (BasisSnapshot | null)[],
   n = 8,
 ): MetricRowData[] {
-  const rows: MetricRowData[] = [];
+  const rows: Omit<MetricRowData, "rank">[] = [];
   for (const snap of snapshots) {
     if (!snap) continue;
     for (const row of snap.term_structure) {
@@ -192,10 +193,13 @@ export default async function OverviewPage() {
     <>
       <div className="overview-header">
         <span className="overview-title">Market Overview</span>
-        <span className="overview-refresh">
-          Page rendered {new Date(now).toLocaleTimeString("en-US", { hour12: false })} UTC
-          &nbsp;·&nbsp; auto-refresh every 2m
-        </span>
+        <div className="overview-header-right">
+          <AssetLookup />
+          <span className="overview-refresh">
+            Page rendered {new Date(now).toLocaleTimeString("en-US", { hour12: false })} UTC
+            &nbsp;·&nbsp; auto-refresh every 2m
+          </span>
+        </div>
       </div>
       <GlobalMarketCard data={globalMarket} />
 
