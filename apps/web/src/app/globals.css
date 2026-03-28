@@ -1676,6 +1676,26 @@ details[open] .assumptions-summary::before { content: "▼  "; }
 
 .fn-pct-table {
   margin-top: 0.75rem;
+  table-layout: fixed;
+}
+
+/* Lock every percentile table to the same column widths so KDE and
+   Empirical rows always line up regardless of header text length.       */
+.fn-pct-table th:nth-child(1),
+.fn-pct-table td:nth-child(1) { width: 80px; text-align: left; }
+
+.fn-pct-table th:nth-child(2),
+.fn-pct-table td:nth-child(2) { width: 58px; }
+
+/* P5 – P95: the remaining five columns share the leftover width equally */
+.fn-pct-table th:nth-child(n+3),
+.fn-pct-table td:nth-child(n+3) { width: auto; }
+
+/* Truncate long header text gracefully instead of reflowing */
+.fn-pct-table th {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Coinglass strip */

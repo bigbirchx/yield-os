@@ -1055,7 +1055,7 @@ function DistributionPanel({
             <table className="fn-table fn-pct-table">
               <thead>
                 <tr>
-                  <th>Series</th><th>N pts</th><th>P5</th><th>P25</th><th>P50 (Median)</th><th>P75</th><th>P95</th>
+                  <th>Series</th><th>N pts</th><th>P5</th><th>P25</th><th title="P50 — Median">P50</th><th>P75</th><th>P95</th>
                 </tr>
               </thead>
               <tbody>
