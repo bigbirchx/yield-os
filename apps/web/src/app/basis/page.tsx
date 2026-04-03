@@ -1,23 +1,21 @@
 "use client";
 
 /**
- * Dated Futures Basis Dashboard
+ * Dated Futures Basis — rebuilt on unified /api/opportunities data.
  *
- * Section 1 — Basis Term Structure Chart  (DTE on X, ann basis % on Y, per venue)
- * Section 2 — Basis Snapshot Table        (sortable, color-coded ann basis %)
- * Section 3 — Historical Basis Chart      (click row → load history for that contract)
- * Section 4 — Controls                    (symbol, venues, USD vs % toggle)
+ * Section 1 — Near-expiry summary cards (one per venue, selected asset)
+ * Section 2 — Term structure chart   (DTE × annualised basis, per venue)
+ * Section 3 — Basis snapshot table   (sorted by ann basis desc, clickable)
+ * Section 4 — Historical basis chart (loaded on row click)
+ *
+ * The old /api/basis/snapshot and /api/basis/history endpoints remain on the
+ * backend for backward compatibility but are no longer called here.
  */
 
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import {
-  fetchBasisHistory,
-  fetchBasisSnapshot,
-  type BasisHistory,
-  type BasisSnapshot,
-  type BasisTermRow,
-} from "@/lib/api";
+import { fetchOpportunities, fetchOpportunityHistory } from "@/lib/api";
+import type { MarketOpportunity, OpportunityRatePoint } from "@/types/api";
 
 const ReactECharts = dynamic(() => import("echarts-for-react"), { ssr: false });
 
@@ -25,36 +23,43 @@ const ReactECharts = dynamic(() => import("echarts-for-react"), { ssr: false });
 // Constants
 // ---------------------------------------------------------------------------
 
-const SYMBOLS = ["BTC", "ETH"];
-const ALL_VENUES = ["deribit", "binance", "okx", "bybit", "cme"] as const;
-type Venue = (typeof ALL_VENUES)[number];
+const SYMBOLS = ["BTC", "ETH", "SOL"] as const;
+type BasisSymbol = (typeof SYMBOLS)[number];
 
-const VENUE_COLORS: Record<Venue, string> = {
-  deribit:  "#6366f1",
-  binance:  "#f59e0b",
-  okx:      "#22c55e",
-  bybit:    "#3b82f6",
-  cme:      "#f97316",
+const ALL_VENUES = ["DERIBIT", "BINANCE", "OKX", "BYBIT", "CME"] as const;
+
+const VENUE_LABELS: Record<string, string> = {
+  DERIBIT: "Deribit",
+  BINANCE: "Binance",
+  OKX: "OKX",
+  BYBIT: "Bybit",
+  CME: "CME",
 };
 
-const VENUE_LABELS: Record<Venue, string> = {
-  deribit: "Deribit",
-  binance: "Binance",
-  okx:     "OKX",
-  bybit:   "Bybit",
-  cme:     "CME",
+const VENUE_COLORS: Record<string, string> = {
+  DERIBIT: "#6366f1",
+  BINANCE: "#f59e0b",
+  OKX: "#22c55e",
+  BYBIT: "#3b82f6",
+  CME: "#f97316",
 };
 
-function fmtPct(v: number | null | undefined, decimals = 2): string {
+// ---------------------------------------------------------------------------
+// Formatters
+// ---------------------------------------------------------------------------
+
+function fmtBasis(v: number | null | undefined, decimals = 2): string {
   if (v == null) return "—";
-  return `${(v * 100).toFixed(decimals)}%`;
+  const sign = v > 0 ? "+" : "";
+  return `${sign}${v.toFixed(decimals)}%`;
 }
 
 function fmtUsd(v: number | null | undefined): string {
   if (v == null) return "—";
-  if (Math.abs(v) >= 1e9) return `$${(v / 1e9).toFixed(2)}B`;
-  if (Math.abs(v) >= 1e6) return `$${(v / 1e6).toFixed(1)}M`;
-  if (Math.abs(v) >= 1e3) return `$${(v / 1e3).toFixed(1)}K`;
+  const a = Math.abs(v);
+  if (a >= 1e9) return `$${(v / 1e9).toFixed(2)}B`;
+  if (a >= 1e6) return `$${(v / 1e6).toFixed(1)}M`;
+  if (a >= 1e3) return `$${(v / 1e3).toFixed(0)}K`;
   return `$${v.toFixed(2)}`;
 }
 
@@ -63,69 +68,204 @@ function fmtPrice(v: number | null | undefined): string {
   return `$${v.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
 }
 
-function basisColor(pct: number | null | undefined): string {
-  if (pct == null) return "var(--text-secondary)";
-  if (pct > 0.12) return "#ef4444";
-  if (pct > 0.06) return "#f97316";
-  if (pct > 0.02) return "#f59e0b";
-  if (pct >= 0)   return "#22c55e";
-  return "#6366f1";
+function fmtDate(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "2-digit",
+  });
+}
+
+function basisColor(v: number | null | undefined): string {
+  if (v == null) return "var(--text-secondary)";
+  if (v > 12) return "#ef4444";
+  if (v > 6) return "#f97316";
+  if (v > 2) return "#f59e0b";
+  if (v >= 0) return "#22c55e";
+  return "#6366f1"; // backwardation
 }
 
 // ---------------------------------------------------------------------------
-// Term Structure ECharts option
+// Helpers
+// ---------------------------------------------------------------------------
+
+/** Pull OI from the LiquidityInfo embedded record. */
+function oppOiUsd(opp: MarketOpportunity): number | null {
+  return (
+    ((opp.liquidity as Record<string, unknown>)
+      ?.available_liquidity_usd as number | null) ?? null
+  );
+}
+
+/**
+ * Parse futures and spot prices from reward_breakdown[0].notes.
+ * Notes format: "Basis locked at entry; futures=65000.00, spot=64000.00, DTE=30"
+ */
+function parsePrices(opp: MarketOpportunity): {
+  futures: number | null;
+  spot: number | null;
+} {
+  const notes = (opp.reward_breakdown?.[0] as { notes?: string } | undefined)?.notes;
+  if (!notes) return { futures: null, spot: null };
+  const fMatch = notes.match(/futures=([\d.]+)/);
+  const sMatch = notes.match(/spot=([\d.]+)/);
+  return {
+    futures: fMatch ? parseFloat(fMatch[1]) : null,
+    spot: sMatch ? parseFloat(sMatch[1]) : null,
+  };
+}
+
+
+// ---------------------------------------------------------------------------
+// Near-expiry summary cards
+// ---------------------------------------------------------------------------
+
+function SummaryCards({
+  opps,
+  symbol,
+}: {
+  opps: MarketOpportunity[];
+  symbol: BasisSymbol;
+}) {
+  const assetOpps = opps.filter(
+    (o) => o.asset_symbol.toUpperCase() === symbol,
+  );
+
+  // Per venue: pick the contract with fewest days to maturity
+  const nearExpiry = ALL_VENUES.map((v) => {
+    const venueOpps = assetOpps.filter((o) => o.venue === v);
+    if (venueOpps.length === 0) return { venue: v, opp: null };
+    const nearest = venueOpps.reduce((best, o) =>
+      (o.days_to_maturity ?? Infinity) < (best.days_to_maturity ?? Infinity)
+        ? o
+        : best,
+    );
+    return { venue: v, opp: nearest };
+  }).filter((x) => x.opp !== null);
+
+  if (nearExpiry.length === 0) {
+    return (
+      <div className="bs-empty">No basis data available for {symbol}</div>
+    );
+  }
+
+  return (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: `repeat(${nearExpiry.length}, 1fr)`,
+        gap: "0.75rem",
+      }}
+    >
+      {nearExpiry.map(({ venue, opp }) => {
+        const basis = opp!.total_apy_pct;
+        const dte = opp!.days_to_maturity;
+        return (
+          <div
+            key={venue}
+            style={{
+              background: "var(--surface)",
+              border: "1px solid var(--border)",
+              borderRadius: "var(--radius)",
+              padding: "0.85rem 1rem",
+              borderLeft: `3px solid ${VENUE_COLORS[venue] ?? "#888"}`,
+            }}
+          >
+            <div
+              style={{
+                fontFamily: "var(--font-mono)",
+                fontSize: "10px",
+                letterSpacing: "0.07em",
+                color: "var(--text-muted)",
+                textTransform: "uppercase",
+                marginBottom: "0.3rem",
+              }}
+            >
+              {VENUE_LABELS[venue] ?? venue}
+              {dte != null && (
+                <span style={{ marginLeft: "0.4rem", opacity: 0.7 }}>
+                  {Math.round(dte)}d
+                </span>
+              )}
+            </div>
+            <div
+              style={{
+                fontFamily: "var(--font-mono)",
+                fontSize: "20px",
+                fontWeight: 600,
+                color: basisColor(basis),
+                lineHeight: 1.2,
+              }}
+            >
+              {fmtBasis(basis)}
+            </div>
+            <div
+              style={{
+                fontSize: "11px",
+                color: "var(--text-muted)",
+                marginTop: "0.2rem",
+                fontFamily: "var(--font-mono)",
+              }}
+            >
+              {opp!.market_id}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Term structure chart
 // ---------------------------------------------------------------------------
 
 function buildTermStructureOption(
-  rows: BasisTermRow[],
+  opps: MarketOpportunity[],
   activeVenues: Set<string>,
-  showUsd: boolean
 ) {
-  const seriesByVenue: Record<string, [number, number, string, string][]> = {};
-  for (const r of rows) {
-    if (!activeVenues.has(r.venue)) continue;
-    if (!seriesByVenue[r.venue]) seriesByVenue[r.venue] = [];
-    const yVal = showUsd ? r.basis_usd : (r.basis_pct_ann ?? 0) * 100;
-    seriesByVenue[r.venue].push([
-      r.days_to_expiry,
-      yVal,
-      r.contract,
-      r.expiry,
-    ]);
+  const byVenue: Record<string, Array<{ dte: number; basis: number; contract: string }>> = {};
+
+  for (const o of opps) {
+    if (!activeVenues.has(o.venue)) continue;
+    if (o.days_to_maturity == null) continue;
+    byVenue[o.venue] ??= [];
+    byVenue[o.venue].push({
+      dte: o.days_to_maturity,
+      basis: o.total_apy_pct,
+      contract: o.market_id,
+    });
   }
 
-  const COLORS: Record<string, string> = VENUE_COLORS as Record<string, string>;
-
-  const series = Object.entries(seriesByVenue).flatMap(([venue, data]) => {
-    const sorted = [...data].sort((a, b) => a[0] - b[0]);
-    const color = COLORS[venue] ?? "#888";
-    const label = VENUE_LABELS[venue as Venue] ?? venue;
-    const pointData = sorted.map(([dte, y, contract, expiry]) => ({
-      value: [dte, y],
-      contract,
-      expiry,
+  const series = Object.entries(byVenue).flatMap(([venue, pts]) => {
+    const sorted = [...pts].sort((a, b) => a.dte - b.dte);
+    const color = VENUE_COLORS[venue] ?? "#888";
+    const label = VENUE_LABELS[venue] ?? venue;
+    const data = sorted.map((p) => ({
+      value: [p.dte, p.basis],
+      contract: p.contract,
     }));
+
     return [
-      // Line connecting the dots per venue
       {
         name: label,
-        type: "line",
-        smooth: false,
+        type: "line" as const,
         showSymbol: false,
+        smooth: false,
         lineStyle: { color, width: 1.5, type: "dashed" as const },
         itemStyle: { color },
-        data: pointData,
+        data,
         tooltip: { show: false },
       },
-      // Labelled scatter dots on top (hidden from legend to avoid duplicates)
       {
         name: label,
-        type: "scatter",
-        legendHoverLink: true,
-        symbolSize: 10,
+        type: "scatter" as const,
+        symbolSize: 9,
         itemStyle: { color },
-        data: pointData,
+        data,
         showInLegend: false,
+        legendHoverLink: true,
       },
     ];
   });
@@ -137,20 +277,13 @@ function buildTermStructureOption(
       backgroundColor: "#1e2328",
       borderColor: "#2a3040",
       textStyle: { color: "#e8eaed", fontSize: 12 },
-      formatter: (params: any) => {
+      formatter: (params: { data: { value: [number, number]; contract: string } }) => {
         const d = params.data;
-        const basisUsdRow = rows.find((r) => r.contract === d.contract);
         return [
           `<strong>${d.contract}</strong>`,
-          `Expiry: ${d.expiry ? new Date(d.expiry).toLocaleDateString() : "—"}`,
-          showUsd
-            ? `Basis USD: ${fmtUsd(d.value[1])}`
-            : `Basis Ann: ${fmtPct(d.value[1] / 100)}`,
-          basisUsdRow ? `OI: ${fmtUsd(basisUsdRow.oi_usd)}` : "",
-          basisUsdRow ? `24h Vol: ${fmtUsd(basisUsdRow.volume_24h_usd)}` : "",
-        ]
-          .filter(Boolean)
-          .join("<br/>");
+          `DTE: ${d.value[0].toFixed(0)}d`,
+          `Ann Basis: ${d.value[1].toFixed(2)}%`,
+        ].join("<br/>");
       },
     },
     legend: {
@@ -162,21 +295,19 @@ function buildTermStructureOption(
     xAxis: {
       name: "Days to Expiry",
       nameTextStyle: { color: "#8b9099", fontSize: 11 },
-      nameLocation: "end",
+      nameLocation: "end" as const,
       axisLine: { lineStyle: { color: "#1e2328" } },
       axisLabel: { color: "#8b9099", fontSize: 11 },
       splitLine: { lineStyle: { color: "#1e2328" } },
     },
     yAxis: {
-      name: showUsd ? "Basis USD" : "Ann Basis %",
+      name: "Ann Basis %",
       nameTextStyle: { color: "#8b9099", fontSize: 11 },
       axisLine: { lineStyle: { color: "#1e2328" } },
       axisLabel: {
         color: "#8b9099",
         fontSize: 11,
-        formatter: showUsd
-          ? (v: number) => fmtUsd(v)
-          : (v: number) => `${v.toFixed(1)}%`,
+        formatter: (v: number) => `${v.toFixed(1)}%`,
       },
       splitLine: { lineStyle: { color: "#1e2328" } },
     },
@@ -185,15 +316,15 @@ function buildTermStructureOption(
 }
 
 // ---------------------------------------------------------------------------
-// History ECharts option
+// Historical chart
 // ---------------------------------------------------------------------------
 
-function buildHistoryOption(history: BasisHistory, showUsd: boolean) {
-  const data = history.series
-    .filter((p) => (showUsd ? p.basis_usd != null : p.basis_pct_ann != null))
-    .map((p) => [
-      p.timestamp,
-      showUsd ? p.basis_usd : (p.basis_pct_ann ?? 0) * 100,
+function buildHistoryOption(pts: OpportunityRatePoint[], contract: string) {
+  const data = pts
+    .filter((p) => p.total_apy_pct != null)
+    .map((p): [number, number] => [
+      new Date(p.snapshot_at).getTime(),
+      p.total_apy_pct,
     ]);
 
   return {
@@ -203,13 +334,12 @@ function buildHistoryOption(history: BasisHistory, showUsd: boolean) {
       backgroundColor: "#1e2328",
       borderColor: "#2a3040",
       textStyle: { color: "#e8eaed", fontSize: 12 },
-      formatter: (params: any) => {
+      formatter: (params: { value: [number, number] }[]) => {
         const p = params[0];
+        const date = new Date(p.value[0]).toLocaleDateString();
         return [
-          `<strong>${new Date(p.value[0]).toLocaleDateString()}</strong>`,
-          showUsd
-            ? `Basis: ${fmtUsd(p.value[1])}`
-            : `Basis Ann: ${fmtPct(p.value[1] / 100)}`,
+          `<strong>${date}</strong>`,
+          `${contract}: ${p.value[1].toFixed(2)}%`,
         ].join("<br/>");
       },
     },
@@ -221,15 +351,13 @@ function buildHistoryOption(history: BasisHistory, showUsd: boolean) {
       splitLine: { lineStyle: { color: "#1e2328" } },
     },
     yAxis: {
-      name: showUsd ? "Basis USD" : "Ann Basis %",
+      name: "Ann Basis %",
       nameTextStyle: { color: "#8b9099", fontSize: 11 },
       axisLine: { lineStyle: { color: "#1e2328" } },
       axisLabel: {
         color: "#8b9099",
         fontSize: 11,
-        formatter: showUsd
-          ? (v: number) => fmtUsd(v)
-          : (v: number) => `${v.toFixed(1)}%`,
+        formatter: (v: number) => `${v.toFixed(1)}%`,
       },
       splitLine: { lineStyle: { color: "#1e2328" } },
     },
@@ -239,127 +367,138 @@ function buildHistoryOption(history: BasisHistory, showUsd: boolean) {
         data,
         showSymbol: false,
         lineStyle: { color: "#3b82f6", width: 1.5 },
-        areaStyle: { color: "rgba(59,130,246,0.08)" },
+        areaStyle: { color: "rgba(59,130,246,0.07)" },
       },
     ],
   };
 }
 
 // ---------------------------------------------------------------------------
-// Main page component
+// Page
 // ---------------------------------------------------------------------------
 
 export default function BasisPage() {
-  const [symbol, setSymbol]           = useState("BTC");
-  const [activeVenues, setActiveVenues] = useState<Set<Venue>>(new Set(ALL_VENUES));
-  const [showUsd, setShowUsd]         = useState(false);
-  const [snapshot, setSnapshot]       = useState<BasisSnapshot | null>(null);
-  const [history, setHistory]         = useState<BasisHistory | null>(null);
-  const [selectedRow, setSelectedRow] = useState<BasisTermRow | null>(null);
-  const [loadingSnap, setLoadingSnap] = useState(false);
-  const [loadingHist, setLoadingHist] = useState(false);
-  const [snapError, setSnapError]     = useState<string | null>(null);
-  const [histDays, setHistDays]       = useState(89);
+  const [opps, setOpps] = useState<MarketOpportunity[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const API_URL =
-    process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+  const [symbol, setSymbol] = useState<BasisSymbol>("BTC");
+  const [activeVenues, setActiveVenues] = useState<Set<string>>(
+    new Set(ALL_VENUES),
+  );
 
-  const loadSnapshot = useCallback(async () => {
-    setLoadingSnap(true);
-    setSnapError(null);
-    try {
-      const data = await fetchBasisSnapshot(symbol);
-      setSnapshot(data);
-    } catch {
-      setSnapError("Failed to load snapshot");
-    } finally {
-      setLoadingSnap(false);
-    }
-  }, [symbol]);
+  // History state
+  const [selectedOpp, setSelectedOpp] = useState<MarketOpportunity | null>(
+    null,
+  );
+  const [historyPts, setHistoryPts] = useState<OpportunityRatePoint[]>([]);
+  const [historyDays, setHistoryDays] = useState<14 | 30 | 89>(30);
+  const [historyLoading, setHistoryLoading] = useState(false);
 
+  // Fetch all basis trade opportunities once
   useEffect(() => {
-    loadSnapshot();
-  }, [loadSnapshot]);
+    setLoading(true);
+    fetchOpportunities({ type: "BASIS_TRADE", limit: 500 })
+      .then((resp) => setOpps(resp.data))
+      .catch(() => setError("Failed to load basis data"))
+      .finally(() => setLoading(false));
+  }, []);
 
-  const handleRowClick = useCallback(
-    async (row: BasisTermRow) => {
-      setSelectedRow(row);
-      setHistory(null);
-      setLoadingHist(true);
+  // Load history when selected opp or days changes
+  const loadHistory = useCallback(
+    async (opp: MarketOpportunity, days: number) => {
+      setHistoryLoading(true);
+      setHistoryPts([]);
       try {
-        const data = await fetchBasisHistory(symbol, row.venue, row.contract, histDays);
-        setHistory(data);
+        const pts = await fetchOpportunityHistory(opp.opportunity_id, days);
+        setHistoryPts(pts);
+      } catch {
+        // silently show empty
       } finally {
-        setLoadingHist(false);
+        setHistoryLoading(false);
       }
     },
-    [symbol, histDays]
+    [],
   );
 
-  const toggleVenue = (venue: Venue) => {
-    setActiveVenues((prev) => {
-      const next = new Set(prev);
-      if (next.has(venue)) {
-        next.delete(venue);
-      } else {
-        next.add(venue);
-      }
-      return next;
-    });
+  const handleRowClick = useCallback(
+    (opp: MarketOpportunity) => {
+      setSelectedOpp(opp);
+      loadHistory(opp, historyDays);
+    },
+    [historyDays, loadHistory],
+  );
+
+  const handleHistoryDaysChange = (d: 14 | 30 | 89) => {
+    setHistoryDays(d);
+    if (selectedOpp) loadHistory(selectedOpp, d);
   };
 
-  const filteredRows = useMemo(
+  // Filter to selected symbol + active venues, sorted by basis desc
+  const filteredOpps = useMemo(
     () =>
-      (snapshot?.term_structure ?? []).filter((r) =>
-        activeVenues.has(r.venue as Venue)
-      ),
-    [snapshot, activeVenues]
+      opps
+        .filter(
+          (o) =>
+            o.asset_symbol.toUpperCase() === symbol &&
+            activeVenues.has(o.venue),
+        )
+        .sort((a, b) => b.total_apy_pct - a.total_apy_pct),
+    [opps, symbol, activeVenues],
   );
 
-  const termStructureOption = useMemo(
+  const termOption = useMemo(
     () =>
-      filteredRows.length > 0
-        ? buildTermStructureOption(filteredRows, activeVenues, showUsd)
+      filteredOpps.length > 0
+        ? buildTermStructureOption(filteredOpps, activeVenues)
         : null,
-    [filteredRows, activeVenues, showUsd]
+    [filteredOpps, activeVenues],
   );
 
   const historyOption = useMemo(
     () =>
-      history && history.series.length > 0
-        ? buildHistoryOption(history, showUsd)
+      historyPts.length > 0 && selectedOpp
+        ? buildHistoryOption(historyPts, selectedOpp.market_id)
         : null,
-    [history, showUsd]
+    [historyPts, selectedOpp],
   );
+
+  const toggleVenue = (v: string) => {
+    setActiveVenues((prev) => {
+      const next = new Set(prev);
+      if (next.has(v)) next.delete(v);
+      else next.add(v);
+      return next;
+    });
+  };
+
+  const asOf = opps[0]?.last_updated_at;
 
   return (
     <div className="bs-page">
-      {/* ------------------------------------------------------------------ */}
-      {/* Header + Controls                                                    */}
-      {/* ------------------------------------------------------------------ */}
+      {/* ── Header + controls ─────────────────────────────────────────────── */}
       <div className="bs-header">
         <div className="bs-title-block">
           <h1 className="bs-title">Dated Futures Basis</h1>
-          {snapshot && (
+          {asOf && (
             <span className="bs-as-of">
-              as of {new Date(snapshot.as_of).toLocaleTimeString()}
+              as of {new Date(asOf).toLocaleTimeString()}
             </span>
           )}
         </div>
 
         <div className="bs-controls">
-          {/* Symbol */}
+          {/* Asset */}
           <div className="bs-control-group">
-            <span className="bs-control-label">Symbol</span>
+            <span className="bs-control-label">Asset</span>
             {SYMBOLS.map((s) => (
               <button
                 key={s}
                 className={`bs-btn ${symbol === s ? "bs-btn--active" : ""}`}
                 onClick={() => {
                   setSymbol(s);
-                  setSnapshot(null);
-                  setHistory(null);
-                  setSelectedRow(null);
+                  setSelectedOpp(null);
+                  setHistoryPts([]);
                 }}
               >
                 {s}
@@ -376,7 +515,11 @@ export default function BasisPage() {
                 className={`bs-btn ${activeVenues.has(v) ? "bs-btn--active" : ""}`}
                 style={
                   activeVenues.has(v)
-                    ? { borderColor: VENUE_COLORS[v], color: VENUE_COLORS[v] }
+                    ? {
+                        borderColor: VENUE_COLORS[v],
+                        color: VENUE_COLORS[v],
+                        background: `${VENUE_COLORS[v]}18`,
+                      }
                     : {}
                 }
                 onClick={() => toggleVenue(v)}
@@ -386,110 +529,169 @@ export default function BasisPage() {
             ))}
           </div>
 
-          {/* Display toggle */}
-          <div className="bs-control-group">
-            <span className="bs-control-label">Display</span>
-            <button
-              className={`bs-btn ${!showUsd ? "bs-btn--active" : ""}`}
-              onClick={() => setShowUsd(false)}
-            >
-              Ann %
-            </button>
-            <button
-              className={`bs-btn ${showUsd ? "bs-btn--active" : ""}`}
-              onClick={() => setShowUsd(true)}
-            >
-              USD Basis
-            </button>
-          </div>
-
-          <button className="bs-btn bs-btn--refresh" onClick={loadSnapshot}>
+          <button
+            className="bs-btn bs-btn--refresh"
+            onClick={() => {
+              setLoading(true);
+              fetchOpportunities({ type: "BASIS_TRADE", limit: 500 })
+                .then((resp) => setOpps(resp.data))
+                .catch(() => {})
+                .finally(() => setLoading(false));
+            }}
+          >
             ↺ Refresh
           </button>
         </div>
       </div>
 
-      {loadingSnap && <div className="bs-loading">Loading term structure…</div>}
-      {snapError && <div className="bs-error">{snapError}</div>}
+      {loading && <div className="bs-loading">Loading basis data…</div>}
+      {error && <div className="bs-error">{error}</div>}
 
-      {/* ------------------------------------------------------------------ */}
-      {/* Section 1 — Term Structure Chart                                    */}
-      {/* ------------------------------------------------------------------ */}
-      {termStructureOption && (
+      {/* ── Summary cards ─────────────────────────────────────────────────── */}
+      {!loading && <SummaryCards opps={opps} symbol={symbol} />}
+
+      {/* ── Term structure chart ──────────────────────────────────────────── */}
+      {termOption && (
         <section className="bs-section bs-section--chart">
-          <h2 className="bs-section-title">Term Structure</h2>
+          <h2 className="bs-section-title">Term Structure — {symbol}</h2>
           <ReactECharts
-            option={termStructureOption}
-            style={{ height: 320 }}
+            option={termOption}
+            style={{ height: 300 }}
             notMerge
           />
         </section>
       )}
 
-      {/* ------------------------------------------------------------------ */}
-      {/* Section 2 — Snapshot Table                                          */}
-      {/* ------------------------------------------------------------------ */}
-      {filteredRows.length > 0 && (
+      {/* ── Basis snapshot table ──────────────────────────────────────────── */}
+      {filteredOpps.length > 0 && (
         <section className="bs-section">
           <h2 className="bs-section-title">
-            Snapshot Table
+            Basis Snapshot
             <span className="bs-section-hint">click a row to load history</span>
           </h2>
           <div className="bs-table-wrap">
             <table className="bs-table">
               <thead>
                 <tr>
+                  <th>Asset</th>
                   <th>Venue</th>
                   <th>Contract</th>
                   <th>Expiry</th>
                   <th>DTE</th>
+                  <th>Ann Basis</th>
+                  <th>Spot Price</th>
                   <th>Futures Price</th>
-                  <th>Index Price</th>
-                  <th>Basis USD</th>
-                  <th>Basis Ann %</th>
                   <th>OI (USD)</th>
-                  <th>24h Vol (USD)</th>
                 </tr>
               </thead>
               <tbody>
-                {filteredRows.map((r) => {
+                {filteredOpps.map((o) => {
+                  const { futures, spot } = parsePrices(o);
                   const isSelected =
-                    selectedRow?.contract === r.contract &&
-                    selectedRow?.venue === r.venue;
+                    selectedOpp?.opportunity_id === o.opportunity_id;
                   return (
                     <tr
-                      key={`${r.venue}-${r.contract}`}
+                      key={o.opportunity_id}
                       className={`bs-tr ${isSelected ? "bs-tr--selected" : ""}`}
-                      onClick={() => handleRowClick(r)}
+                      style={{
+                        cursor: "pointer",
+                        background: isSelected
+                          ? "rgba(59,130,246,0.07)"
+                          : undefined,
+                      }}
+                      onClick={() => handleRowClick(o)}
                     >
                       <td>
                         <span
-                          className="bs-venue-dot"
-                          style={{ background: VENUE_COLORS[r.venue as Venue] }}
-                        />
-                        {VENUE_LABELS[r.venue as Venue] ?? r.venue}
+                          style={{
+                            fontFamily: "var(--font-mono)",
+                            fontWeight: 600,
+                            color: "var(--text-primary)",
+                          }}
+                        >
+                          {o.asset_symbol}
+                        </span>
                       </td>
-                      <td className="bs-mono">{r.contract}</td>
-                      <td className="bs-mono">
-                        {new Date(r.expiry).toLocaleDateString()}
+                      <td>
+                        <span
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: "0.35rem",
+                          }}
+                        >
+                          <span
+                            style={{
+                              display: "inline-block",
+                              width: "7px",
+                              height: "7px",
+                              borderRadius: "50%",
+                              background: VENUE_COLORS[o.venue] ?? "#888",
+                              flexShrink: 0,
+                            }}
+                          />
+                          {VENUE_LABELS[o.venue] ?? o.venue}
+                        </span>
                       </td>
-                      <td className="bs-mono">{r.days_to_expiry}d</td>
-                      <td className="bs-mono">{fmtPrice(r.futures_price)}</td>
-                      <td className="bs-mono">{fmtPrice(r.index_price)}</td>
                       <td
-                        className="bs-mono"
-                        style={{ color: r.basis_usd >= 0 ? "#22c55e" : "#ef4444" }}
+                        style={{
+                          fontFamily: "var(--font-mono)",
+                          color: "var(--text-primary)",
+                        }}
                       >
-                        {fmtUsd(r.basis_usd)}
+                        {o.market_id}
                       </td>
                       <td
-                        className="bs-mono bs-basis-cell"
-                        style={{ color: basisColor(r.basis_pct_ann) }}
+                        style={{
+                          fontFamily: "var(--font-mono)",
+                          color: "var(--text-secondary)",
+                        }}
                       >
-                        {fmtPct(r.basis_pct_ann)}
+                        {fmtDate(o.maturity_date)}
                       </td>
-                      <td className="bs-mono">{fmtUsd(r.oi_usd)}</td>
-                      <td className="bs-mono">{fmtUsd(r.volume_24h_usd)}</td>
+                      <td
+                        style={{
+                          fontFamily: "var(--font-mono)",
+                          color: "var(--text-secondary)",
+                        }}
+                      >
+                        {o.days_to_maturity != null
+                          ? `${Math.round(o.days_to_maturity)}d`
+                          : "—"}
+                      </td>
+                      <td
+                        style={{
+                          fontFamily: "var(--font-mono)",
+                          fontWeight: 600,
+                          color: basisColor(o.total_apy_pct),
+                        }}
+                      >
+                        {fmtBasis(o.total_apy_pct)}
+                      </td>
+                      <td
+                        style={{
+                          fontFamily: "var(--font-mono)",
+                          color: "var(--text-secondary)",
+                        }}
+                      >
+                        {fmtPrice(spot)}
+                      </td>
+                      <td
+                        style={{
+                          fontFamily: "var(--font-mono)",
+                          color: "var(--text-secondary)",
+                        }}
+                      >
+                        {fmtPrice(futures)}
+                      </td>
+                      <td
+                        style={{
+                          fontFamily: "var(--font-mono)",
+                          color: "var(--text-secondary)",
+                        }}
+                      >
+                        {fmtUsd(oppOiUsd(o))}
+                      </td>
                     </tr>
                   );
                 })}
@@ -499,28 +701,29 @@ export default function BasisPage() {
         </section>
       )}
 
-      {/* ------------------------------------------------------------------ */}
-      {/* Section 3 — Historical Basis Chart                                  */}
-      {/* ------------------------------------------------------------------ */}
-      {selectedRow && (
+      {!loading && filteredOpps.length === 0 && (
+        <div className="bs-empty">
+          No basis data for {symbol} with selected venues
+        </div>
+      )}
+
+      {/* ── Historical basis chart ────────────────────────────────────────── */}
+      {selectedOpp && (
         <section className="bs-section">
-          <div className="bs-hist-header">
-            <h2 className="bs-section-title">
+          <div className="bs-hist-header" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "0.75rem" }}>
+            <h2 className="bs-section-title" style={{ margin: 0 }}>
               Historical Basis —{" "}
-              <span style={{ color: VENUE_COLORS[selectedRow.venue as Venue] }}>
-                {VENUE_LABELS[selectedRow.venue as Venue] ?? selectedRow.venue}
+              <span style={{ color: VENUE_COLORS[selectedOpp.venue] ?? "#888" }}>
+                {VENUE_LABELS[selectedOpp.venue] ?? selectedOpp.venue}
               </span>{" "}
-              {selectedRow.contract}
+              {selectedOpp.market_id}
             </h2>
-            <div className="bs-hist-days">
-              {[14, 30, 89].map((d) => (
+            <div style={{ display: "flex", gap: "0.35rem" }}>
+              {([14, 30, 89] as const).map((d) => (
                 <button
                   key={d}
-                  className={`bs-btn ${histDays === d ? "bs-btn--active" : ""}`}
-                  onClick={() => {
-                    setHistDays(d);
-                    handleRowClick(selectedRow);
-                  }}
+                  className={`bs-btn ${historyDays === d ? "bs-btn--active" : ""}`}
+                  onClick={() => handleHistoryDaysChange(d)}
                 >
                   {d}d
                 </button>
@@ -528,11 +731,9 @@ export default function BasisPage() {
             </div>
           </div>
 
-          {loadingHist && (
-            <div className="bs-loading">Loading history…</div>
-          )}
+          {historyLoading && <div className="bs-loading">Loading history…</div>}
 
-          {historyOption && !loadingHist && (
+          {!historyLoading && historyOption && (
             <ReactECharts
               option={historyOption}
               style={{ height: 260 }}
@@ -540,12 +741,9 @@ export default function BasisPage() {
             />
           )}
 
-          {!loadingHist && history && history.series.length === 0 && (
+          {!historyLoading && !historyOption && (
             <div className="bs-empty">
-              No historical data available for this contract via{" "}
-              {selectedRow.venue}.
-              {selectedRow.venue === "deribit" &&
-                " Deribit history requires Amberdata key."}
+              No historical snapshots stored for {selectedOpp.market_id} yet
             </div>
           )}
         </section>

@@ -73,7 +73,7 @@ function factorBar(factor: ReasonFactor) {
   );
 }
 
-export function BorrowDemandCard({ analysis, symbol }: BorrowDemandCardProps) {
+export function BorrowDemandCard({ analysis }: BorrowDemandCardProps) {
   if (!analysis) {
     return (
       <div className="borrow-demand-card">
@@ -85,7 +85,6 @@ export function BorrowDemandCard({ analysis, symbol }: BorrowDemandCardProps) {
   }
 
   const cfg = DEMAND_CONFIG[analysis.demand_level];
-  const scorePct = Math.round(Math.max(0, analysis.demand_score) * 100);
 
   return (
     <div className="borrow-demand-card">

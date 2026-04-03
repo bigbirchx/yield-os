@@ -8,12 +8,6 @@ const RANK_BADGE: Record<number, string> = {
   4: "route-rank-4",
 };
 
-const ROUTE_TYPE_LABEL: Record<string, string> = {
-  direct_borrow:      "Direct Borrow",
-  stable_borrow_spot: "Stable → Spot",
-  wrapper_transform:  "Wrapper / Transform",
-  synthetic_hedge:    "Synthetic Hedge",
-};
 
 function usd(v: number) {
   if (v >= 1e9) return `$${(v / 1e9).toFixed(1)}B`;
