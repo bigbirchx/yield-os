@@ -104,6 +104,16 @@ and `route_optimizer_loader` BTC equivalence groups.
 | `FundingRatesDrawer` | `components/asset/FundingRatesDrawer.tsx` | Collapsible bar on asset pages; lazily loads full funding dashboard on first expand |
 | `FundingDashboard` | `components/funding/FundingDashboard.tsx` | Extracted reusable funding dashboard; accepts `initialSymbol` and `showSymbolPicker` props |
 
+## Book / Portfolio Overlay
+
+| Data | Source | Key? |
+|------|--------|------|
+| Positions, counterparties, collateral | CreditDesk WACC Export (Excel upload) | No |
+| Position classification | Auto-classified by `book_import.py` (regex on counterparty names) | No |
+| Rate comparison benchmarks | `market_opportunities` table (DeFi/CeFi pools with $5M+ TVL) | No |
+| Optimization suggestions | `book_optimizer.py` (8 analysis passes against market data) | No |
+| Route conversion analysis | `route-optimizer` package (multi-hop yield routes) | No |
+
 ## Internal Reference Codebase (optional)
 
 Mounted read-only at `/home/ec2-user/workspace` inside the API Docker container.

@@ -22,6 +22,14 @@
 | `lending_market_history` | Daily historical borrow/lend APY per pool |
 | `risk_params` | Collateral parameters from Aave / Morpho / Kamino |
 | `coingecko_market_snapshots` | Asset price, market cap, 24h volume |
+| `asset_registry` | Canonical asset definitions with taxonomy (migration 006) |
+| `asset_chains`, `asset_addresses` | Per-chain contract addresses |
+| `market_opportunities` | Normalized DeFi/CeFi yield opportunities (migration 007) |
+| `token_universe` | Full token universe with metadata (migration 008) |
+| `books` | Imported portfolio books (migration 009) |
+| `book_positions` | Individual positions with auto-classification |
+| `book_observed_collateral` | Collateral observations per counterparty |
+| `book_collateral_allocations` | Pro-rata collateral-to-position allocations |
 
 ## API router map
 
@@ -36,6 +44,45 @@
 | `staking` | `/api/staking` | LST/staking yields |
 | `borrow_demand` | `/api/borrow-demand` | Borrow demand explainer |
 | `reference` | `/api/reference` | Reference rates (global market, asset metadata) |
+| `assets` | `/api/assets` | Asset registry and taxonomy |
+| `opportunities` | `/api/opportunities` | Market opportunities (DeFi/CeFi yields) |
+| `tokens` | `/api/tokens` | Token universe |
+| `yield_optimizer` | `/api/yield-optimizer` | Route optimization engine |
+| `book` | `/api/book` | Portfolio book import, analysis, optimization |
+
+## Shared packages
+
+Reusable Python packages under `packages/`, installed into the API container at build time:
+
+| Package | Purpose |
+|---------|---------|
+| `asset-registry` | Asset taxonomy, normalization, and conversion rules |
+| `opportunity-schema` | Shared data model for market opportunities |
+| `portfolio` | Position models and `PositionCategory` enum |
+| `route-optimizer` | Multi-hop yield route optimization engine |
+
+## DeFi protocol adapters
+
+Unified adapter interface (`base_adapter.py`) with implementations for:
+
+| Adapter | Protocol | Chain |
+|---------|----------|-------|
+| `aave_v3.py` | Aave v3 | Ethereum, Arbitrum, Optimism, etc. |
+| `morpho.py` | Morpho Blue | Ethereum |
+| `kamino.py` | Kamino | Solana |
+| `compound_v3.py` | Compound v3 | Ethereum |
+| `euler_v2.py` | Euler v2 | Ethereum |
+| `jupiter.py` | Jupiter | Solana |
+| `lido.py` | Lido | Ethereum |
+| `pendle.py` | Pendle | Ethereum |
+| `spark.py` | Spark | Ethereum |
+| `sky.py` | Sky (MakerDAO) | Ethereum |
+| `etherfi.py` | EtherFi | Ethereum |
+| `justlend.py` | JustLend | Tron |
+| `katana.py` | Katana | Ronin |
+| `cex_earn.py` | CEX earn products | Various |
+| `basis_trade.py` | Basis trade opportunities | Various |
+| `funding_rate.py` | Funding rate opportunities | Various |
 
 ## Main data flow
 

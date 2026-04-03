@@ -1139,3 +1139,91 @@ Follow docs/GIT_WORKFLOW.md.
 ### Commits
 `1e97cb9` — feat: asset lookup on overview + funding rates drawer on asset pages
 `5ffb24d` — fix: lock KDE and Empirical distribution table column widths to stay aligned
+
+## Prompt 18 — Asset Ontology, Market Opportunities, Token Universe
+
+Build the foundational data layer for asset management:
+
+1. **Shared packages** (`packages/`): asset-registry (taxonomy, normalization,
+   conversions), opportunity-schema (shared data model), portfolio (position
+   models, PositionCategory), route-optimizer (multi-hop yield optimization).
+
+2. **DeFi protocol adapters** (`connectors/`): unified `BaseAdapter` interface
+   with implementations for Aave v3, Morpho, Kamino, Compound v3, Euler v2,
+   Jupiter, Lido, Pendle, Spark, Sky, EtherFi, JustLend, Katana, plus CEX
+   earn, basis trade, and funding rate adapters.
+
+3. **DB migrations**: 006 (asset ontology), 007 (market opportunities),
+   008 (token universe).
+
+4. **API routers**: assets, opportunities, tokens, yield_optimizer.
+
+5. **Services**: opportunity_ingestion, asset_registry_sync, token_universe.
+
+6. **Frontend pages**: /assets, /tokens, /opportunities, /optimizer with
+   Sidebar navigation, shared components (DataTable, FilterBar, StatCard, etc.).
+
+7. **Worker**: standalone APScheduler worker with Docker service.
+
+## Prompt 19 — Book Import Service
+
+Build the CreditDesk WACC Export importer:
+
+1. Parse three Excel sheets (Asset_Params, Trades_Raw, Observed_Collateral).
+2. Map CreditDesk column headers to internal field names with variant handling.
+3. Auto-classify positions into 7 categories (DEFI_SUPPLY, DEFI_BORROW,
+   NATIVE_STAKING, BILATERAL_LOAN_OUT, BILATERAL_BORROW_IN, INTERNAL, OFF_PLATFORM).
+4. Extract protocol and chain from counterparty names via regex.
+5. Pro-rata collateral allocation to positions.
+6. DB model and migration (009_book_tables).
+7. Book router with 8 endpoints (import, metadata, positions, defi, collateral,
+   counterparty, summary, refresh-matching).
+
+## Prompt 20 — Book Optimization Engine
+
+Build the optimization engine (`book_optimizer.py`) tailored for a lending/trading desk:
+
+1. **SuggestionType enum** with 10 types: DEFI_RATE_IMPROVEMENT,
+   DEFI_NEW_OPPORTUNITY, DEFI_BORROW_OPTIMIZATION, BILATERAL_PRICING_CHECK,
+   STAKING_RATE_CHECK, CAPACITY_WARNING, COLLATERAL_EFFICIENCY,
+   RATE_DEGRADATION, CONVERSION_OPPORTUNITY, MATURITY_ACTION.
+
+2. **8 analysis passes** (A–H): DeFi rate comparison, borrow optimization,
+   bilateral pricing intelligence, staking rate verification, collateral
+   efficiency, maturity actions, capacity warnings, conversion opportunities.
+
+3. **Rate filtering**: $5M minimum TVL, NULL TVL exclusion, >100% non-Pendle
+   APY filter to avoid misleading comparisons from small/incentivized pools.
+
+4. **5 API endpoints**: analyze, defi-vs-market, bilateral-pricing,
+   collateral-efficiency, maturity-calendar.
+
+## Prompt 21 — Book Management UI
+
+Build the book management and analysis frontend at /book:
+
+1. Drag-and-drop Excel upload zone with file validation.
+2. Summary dashboard with 10 StatCards and category/asset/counterparty charts.
+3. DeFi Positions tab with rate vs market delta coloring.
+4. Bilateral Book tab with pricing assessment badges.
+5. Collateral tab with counterparty accordions and efficiency metrics.
+6. Optimization Suggestions tab with prioritized cards and expandable detail.
+7. Maturity Calendar tab with sorted table and status badges.
+8. Update Sidebar navigation (remove "soon" badge from Book).
+
+## Prompt 22 — End-to-end Verification
+
+Run 9-step verification against the real CreditDesk WACC Export workbook.
+Fix all issues found during verification:
+
+- Column mapping variants (Rehypothecation Allowed, Collateral Substitution
+  Allowed, Is Tri Party).
+- Price column casing (Price Usd vs Price USD).
+- FK constraint flush after book row insert.
+- NaT date handling in _safe_date().
+- Anomalous rate filtering: raised minimum TVL from $0→$5M, excluded NULL TVL
+  pools, to prevent small/incentivized pools (e.g. Kamino USDC at 84% with
+  $501K TVL, Morpho USDC at 60% with $1.8M TVL) from distorting comparisons.
+
+Final results: 263 positions, $1.11B loans out, $1.45B borrows in,
+23 optimization suggestions with $5.5M estimated annual impact.

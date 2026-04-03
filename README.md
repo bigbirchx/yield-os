@@ -19,23 +19,31 @@ apps/
   api/          FastAPI backend
     app/
       core/           config, database session
-      models/         SQLAlchemy ORM models
-      routers/        HTTP route handlers (admin, basis, borrow_demand,
-                      derivatives, funding, lending, reference, staking)
-      services/       business logic (basis_service, funding_service,
-                      internal_ingestion, defillama_ingestion, etc.)
+      models/         SQLAlchemy ORM models (asset, book, opportunity, token_universe)
+      routers/        HTTP route handlers (admin, assets, basis, book, borrow_demand,
+                      derivatives, funding, lending, opportunities, reference,
+                      staking, tokens, yield_optimizer)
+      services/       business logic (book_import, book_optimizer, opportunity_ingestion,
+                      asset_registry_sync, defillama_ingestion, etc.)
       connectors/     external data connectors
         internal/     internal exchange REST wrappers (Binance, OKX, Bybit)
-        coinglass_client.py
-    alembic/    migration scripts
+        aave_v3.py, morpho.py, kamino.py, compound_v3.py, euler_v2.py, etc.
+        base_adapter.py — unified DeFi adapter interface
+    alembic/    migration scripts (001–009)
     tests/
   web/          Next.js frontend
     src/app/    App Router pages:
-                  /overview, /funding, /basis, /assets/[symbol]
-    src/lib/    API client helpers (api.ts)
-    src/components/  shared UI components
-  worker/       (future) standalone ingestion jobs
-docs/           project docs — ARCHITECTURE, DATA_DICTIONARY, SOURCE_MAP, etc.
+                  /overview, /funding, /basis, /assets/[symbol],
+                  /assets, /tokens, /opportunities, /optimizer, /book
+    src/lib/    API client helpers (api.ts), hooks, theme
+    src/components/  shared UI (Sidebar, TopBar, StatCard, DataTable, FilterBar, etc.)
+  worker/       standalone ingestion worker (APScheduler)
+packages/
+  asset-registry/      asset taxonomy, normalization, conversions
+  opportunity-schema/  shared opportunity data model
+  portfolio/           position models and categorization
+  route-optimizer/     yield route optimization engine
+docs/           project docs — ARCHITECTURE, BOOK_SYSTEM, DATA_DICTIONARY, SOURCE_MAP, etc.
 ```
 
 ## Pages
@@ -44,8 +52,13 @@ docs/           project docs — ARCHITECTURE, DATA_DICTIONARY, SOURCE_MAP, etc.
 |------|------|-------------|
 | Market Overview | `/overview` | Top borrow/lend rates, highest funding & basis, capacity constraints |
 | Funding Rates | `/funding` | Live perpetual funding rates + 90-day history charts (Binance, OKX, Bybit, Deribit) |
-| Dated Futures Basis | `/basis` | Basis term structure chart, snapshot table, and historical basis per venue (Binance, OKX, Bybit, Deribit) |
+| Dated Futures Basis | `/basis` | Basis term structure chart, snapshot table, and historical basis per venue |
 | Asset Cockpit | `/assets/[symbol]` | Per-asset rates, borrow demand, risk params, route optimizer |
+| Asset List | `/assets` | Browse all tracked assets |
+| Token Universe | `/tokens` | Full token universe with metadata and classification |
+| Market Opportunities | `/opportunities` | Live DeFi/CeFi yield opportunities with filters |
+| Route Optimizer | `/optimizer` | Multi-hop yield route optimization |
+| Book Analysis | `/book` | Portfolio book import (Excel), optimization engine, collateral tracking |
 
 ## API endpoints (selected)
 
@@ -58,8 +71,18 @@ docs/           project docs — ARCHITECTURE, DATA_DICTIONARY, SOURCE_MAP, etc.
 | `GET /api/basis/history?symbol=BTC&venue=deribit&contract=BTC-28MAR25&days=89` | Historical basis for a contract |
 | `GET /api/derivatives/overview?symbols=BTC&symbols=ETH` | Derivatives overview (OI, funding, basis) |
 | `GET /api/lending/overview?symbols=USDC` | Lending rates overview |
-| `POST /api/admin/ingest` | Trigger full data ingestion (DeFiLlama, Aave, Morpho, Kamino, internal exchanges) |
+| `GET /api/opportunities/?asset=ETH&side=SUPPLY` | Market opportunities with filters |
+| `POST /api/admin/ingest` | Trigger full data ingestion |
 | `POST /api/admin/backfill?days=90` | Backfill historical lending data |
+| `POST /api/book/import` | Upload CreditDesk Excel workbook |
+| `GET /api/book/{id}/summary` | Book summary statistics |
+| `POST /api/book/{id}/analyze` | Run optimization engine (returns suggestions) |
+| `GET /api/book/{id}/defi-vs-market` | DeFi position vs market rate comparison |
+| `GET /api/book/{id}/bilateral-pricing` | Bilateral loan pricing intelligence |
+| `GET /api/book/{id}/collateral-efficiency` | Per-counterparty collateral efficiency |
+| `GET /api/book/{id}/maturity-calendar` | Fixed-term maturity schedule |
+
+See [docs/BOOK_SYSTEM.md](docs/BOOK_SYSTEM.md) for the full book system documentation.
 
 ## Prerequisites
 
