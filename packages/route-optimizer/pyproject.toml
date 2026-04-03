@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=65"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "route-optimizer"
+version = "0.1.0"
+description = "Yield route optimizer for Yield OS — finds highest net yield considering conversion costs, capacity, and rate impact"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.0",
+    "asset-registry",
+    "opportunity-schema",
+]
+
+# The directory is named route-optimizer (hyphen) but Python imports it as
+# route_optimizer (underscore).  package-dir maps the importable name to ".".
+[tool.setuptools]
+packages = ["route_optimizer"]
+package-dir = {"route_optimizer" = "."}

@@ -138,27 +138,31 @@ class CoinGeckoClient:
 
     async def coins_markets(
         self,
-        ids: list[str],
+        ids: list[str] | None = None,
         vs_currency: str = "usd",
         per_page: int = 100,
         page: int = 1,
+        order: str = "market_cap_desc",
     ) -> list[dict]:
         """
         GET /coins/markets
-        Returns current price, market cap, volume, etc. for the given IDs.
+        Returns current price, market cap, volume, etc.
+
+        When *ids* is empty or None, returns coins ordered by *order*
+        (default: market_cap_desc) — useful for fetching the top N.
         """
         try:
-            return await self._get(
-                "/coins/markets",
-                params={
-                    "vs_currency": vs_currency,
-                    "ids": ",".join(ids),
-                    "per_page": per_page,
-                    "page": page,
-                    "sparkline": "false",
-                    "price_change_percentage": "24h",
-                },
-            )
+            params: dict[str, Any] = {
+                "vs_currency": vs_currency,
+                "order": order,
+                "per_page": per_page,
+                "page": page,
+                "sparkline": "false",
+                "price_change_percentage": "24h",
+            }
+            if ids:
+                params["ids"] = ",".join(ids)
+            return await self._get("/coins/markets", params=params)
         except Exception as exc:
             log.error("coingecko_coins_markets_error", error=str(exc))
             return []

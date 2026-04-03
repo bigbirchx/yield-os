@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=65"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "asset-registry"
+version = "0.1.0"
+description = "Canonical asset taxonomy and normalisation for Yield OS"
+requires-python = ">=3.11"
+dependencies = ["pydantic>=2.0"]
+
+# The directory is named asset-registry (hyphen) but Python imports it as
+# asset_registry (underscore).  package-dir maps the importable name to ".".
+[tool.setuptools]
+packages = ["asset_registry"]
+package-dir = {"asset_registry" = "."}

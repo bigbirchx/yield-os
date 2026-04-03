@@ -111,7 +111,7 @@ def test_staking_row_lido():
     )
     row = _staking_row(pool, _now())
 
-    assert row.symbol == "STETH"
+    assert row.symbol == "stETH"  # normalised to canonical ID
     assert row.underlying_symbol == "ETH"
     assert row.protocol == "lido"
     assert row.chain == "Ethereum"

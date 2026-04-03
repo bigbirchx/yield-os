@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     # Kamino: public REST API, no key required
     kamino_api_url: str = "https://api.kamino.finance"
 
+    # DeFiLlama yields pools endpoint — used by Kamino liquidity and Jupiter adapters
+    defillama_yields_url: str = "https://yields.llama.fi/pools"
+
     # CoinGecko: Pro key lifts rate limits and unlocks /simple/price bulk endpoint
     # Free tier (no key) works for low-volume dev use
     coingecko_api_key: str = ""
@@ -54,6 +57,36 @@ class Settings(BaseSettings):
     # Amberdata derivatives key — required for CME futures basis data only
     # Leave empty to skip CME venue (Deribit/Binance/OKX/Bybit work without it)
     amberdata_derivs_key: str = ""
+
+    # Binance API credentials — for Binance Simple Earn signed endpoints
+    # Leave empty to use DeFiLlama fallback for earn rates
+    binance_api_key: str = ""
+    binance_api_secret: str = ""
+
+    # Compound V3 — Messari DeFi subgraphs per chain (no key required for hosted service)
+    # Override with The Graph decentralized network URLs + API key for production
+    compound_v3_ethereum_url: str = "https://api.thegraph.com/subgraphs/name/messari/compound-v3-ethereum"
+    compound_v3_arbitrum_url: str = "https://api.thegraph.com/subgraphs/name/messari/compound-v3-arbitrum"
+    compound_v3_base_url: str = "https://api.thegraph.com/subgraphs/name/messari/compound-v3-base"
+    compound_v3_polygon_url: str = "https://api.thegraph.com/subgraphs/name/messari/compound-v3-polygon"
+    compound_v3_optimism_url: str = "https://api.thegraph.com/subgraphs/name/messari/compound-v3-optimism"
+
+    # Pendle Finance — public REST API, no key required
+    pendle_api_url: str = "https://api-v2.pendle.finance/core"
+
+    # Euler V2 — official hosted API
+    euler_v2_url: str = "https://api.euler.finance/graphql"
+
+    # SparkLend — subgraph (Aave V3 fork, Ethereum only)
+    spark_url: str = "https://api.thegraph.com/subgraphs/name/marsfoundation/sparklend-mainnet"
+
+    # Sky/Maker savings rates — for sDAI DSR and sUSDS SSR
+    # DeFiLlama yields API provides these in a normalized format
+    sky_savings_url: str = "https://yields.llama.fi/pools"
+
+    # JustLend — Tron's dominant lending protocol, public REST API, no key required
+    # Official docs: https://api2.justlend.link
+    justlend_api_url: str = "https://api2.justlend.link"
 
     @property
     def database_url(self) -> str:

@@ -11,9 +11,9 @@ import pytest
 import respx
 from httpx import Response
 
-from app.connectors.aave_client import AaveClient, AaveReserve
-from app.connectors.morpho_client import MorphoClient, MorphoMarket
-from app.connectors.kamino_client import KaminoClient, KaminoReserve
+from app.connectors.aave_client_legacy import AaveClient, AaveReserve
+from app.connectors.morpho_client_legacy import MorphoClient, MorphoMarket
+from app.connectors.kamino_client_legacy import KaminoClient, KaminoReserve
 from app.services.risk_ingestion import _from_aave, _from_morpho, _from_kamino
 
 _NOW = datetime.now(UTC)

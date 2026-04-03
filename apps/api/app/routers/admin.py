@@ -8,8 +8,9 @@ Do not expose to the public internet without adding auth.
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import UTC, datetime, timedelta
-from typing import Literal
+from typing import Any, Literal
 
 import structlog
 from fastapi import APIRouter, Depends, Query
@@ -29,6 +30,18 @@ log = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
+# ---------------------------------------------------------------------------
+# Redis key constants (must match apps/worker/config.py)
+# ---------------------------------------------------------------------------
+
+_HEARTBEAT_KEY = "yos:worker:heartbeat"
+_HEALTH_HASH_KEY = "yos:worker:health"
+_SUMMARY_KEY = "yos:worker:summary"
+
+_HEARTBEAT_HEALTHY_MAX_S = 120   # < 2 min → healthy
+_HEARTBEAT_DOWN_AFTER_S = 300    # > 5 min → down
+_FAILURE_THRESHOLD = 3           # consecutive failures for "degraded"
+
 
 # ---------------------------------------------------------------------------
 # Response schemas
@@ -37,7 +50,7 @@ router = APIRouter(prefix="/api/admin", tags=["admin"])
 
 class IngestResult(BaseModel):
     triggered_at: datetime
-    defillama: dict[str, int]
+    defillama: dict[str, str | int]
     aave: dict[str, str | int]
     morpho: dict[str, str | int]
     kamino: dict[str, str | int]
@@ -58,6 +71,25 @@ class SourceStatus(BaseModel):
     row_count: int
     stale_threshold_minutes: int
     populates: list[str]
+
+
+class JobHealth(BaseModel):
+    last_run: str | None = None
+    last_success: str | None = None
+    last_status: Literal["success", "failure", "unknown"] = "unknown"
+    consecutive_failures: int = 0
+    duration_seconds: float | None = None
+    detail: dict[str, Any] | None = None
+
+
+class WorkerHealthResponse(BaseModel):
+    worker_status: Literal["healthy", "degraded", "down"]
+    last_heartbeat: str | None = None
+    heartbeat_age_seconds: float | None = None
+    jobs: dict[str, JobHealth]
+    total_opportunities: int | None = None
+    by_venue: dict[str, int] | None = None
+    by_chain: dict[str, int] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -231,16 +263,181 @@ async def list_sources(db: AsyncSession = Depends(get_db)) -> list[SourceStatus]
     return results
 
 
+async def _get_redis_conn():
+    """Return an async Redis connection, or None if unavailable."""
+    try:
+        import redis.asyncio as aioredis
+        from app.core.config import settings as app_settings
+
+        r = aioredis.from_url(
+            app_settings.redis_url,
+            decode_responses=True,
+            socket_connect_timeout=2.0,
+        )
+        await r.ping()
+        return r
+    except Exception:
+        return None
+
+
+@router.get("/worker-health", response_model=WorkerHealthResponse)
+async def worker_health(
+    db: AsyncSession = Depends(get_db),
+) -> WorkerHealthResponse:
+    """
+    Return worker process health derived from Redis heartbeat and job metrics.
+
+    Status logic:
+    - **healthy** — heartbeat < 2 min old, no jobs have > 3 consecutive failures
+    - **degraded** — heartbeat is recent but some jobs are failing
+    - **down** — heartbeat > 5 min old or Redis unreachable
+    """
+    r = await _get_redis_conn()
+    if r is None:
+        return WorkerHealthResponse(
+            worker_status="down",
+            jobs={},
+        )
+
+    try:
+        now = datetime.now(UTC)
+
+        # ── Heartbeat ───────────────────────────────────────────────────
+        heartbeat_raw = await r.get(_HEARTBEAT_KEY)
+        heartbeat_age_s: float | None = None
+        if heartbeat_raw:
+            heartbeat_dt = datetime.fromisoformat(heartbeat_raw)
+            heartbeat_age_s = (now - heartbeat_dt).total_seconds()
+
+        # ── Per-job health ──────────────────────────────────────────────
+        job_entries_raw: dict[str, str] = await r.hgetall(_HEALTH_HASH_KEY)
+        jobs: dict[str, JobHealth] = {}
+        max_consecutive_failures = 0
+
+        for job_name, raw in job_entries_raw.items():
+            entry = json.loads(raw)
+            consecutive = entry.get("consecutive_failures", 0)
+            max_consecutive_failures = max(max_consecutive_failures, consecutive)
+            jobs[job_name] = JobHealth(
+                last_run=entry.get("last_run"),
+                last_success=entry.get("last_success"),
+                last_status="success" if entry.get("success") else "failure",
+                consecutive_failures=consecutive,
+                duration_seconds=entry.get("duration_s"),
+                detail=entry.get("detail"),
+            )
+
+        # ── Summary (written by health_report job) ──────────────────────
+        summary_raw = await r.get(_SUMMARY_KEY)
+        total_opportunities: int | None = None
+        by_venue: dict[str, int] | None = None
+        by_chain: dict[str, int] | None = None
+
+        if summary_raw:
+            summary = json.loads(summary_raw)
+            total_opportunities = summary.get("total_opportunities")
+            by_venue = summary.get("by_venue")
+
+        # by_chain isn't in the summary yet — query the DB directly
+        from app.models.opportunity import MarketOpportunityRow
+        from sqlalchemy import func, select
+
+        chain_rows = (await db.execute(
+            select(
+                MarketOpportunityRow.chain,
+                func.count().label("n"),
+            ).group_by(MarketOpportunityRow.chain)
+        )).all()
+        if chain_rows:
+            by_chain = {r.chain: r.n for r in chain_rows}
+
+        # If we don't have a summary yet, also get total + by_venue from DB
+        if total_opportunities is None:
+            total_opportunities = (await db.execute(
+                select(func.count()).select_from(MarketOpportunityRow)
+            )).scalar() or 0
+        if by_venue is None:
+            venue_rows = (await db.execute(
+                select(
+                    MarketOpportunityRow.venue,
+                    func.count().label("n"),
+                ).group_by(MarketOpportunityRow.venue)
+            )).all()
+            by_venue = {r.venue: r.n for r in venue_rows}
+
+        # ── Determine overall status ────────────────────────────────────
+        if heartbeat_raw is None or (heartbeat_age_s and heartbeat_age_s > _HEARTBEAT_DOWN_AFTER_S):
+            worker_status: Literal["healthy", "degraded", "down"] = "down"
+        elif max_consecutive_failures >= _FAILURE_THRESHOLD:
+            worker_status = "degraded"
+        elif heartbeat_age_s and heartbeat_age_s > _HEARTBEAT_HEALTHY_MAX_S:
+            worker_status = "degraded"
+        else:
+            worker_status = "healthy"
+
+        return WorkerHealthResponse(
+            worker_status=worker_status,
+            last_heartbeat=heartbeat_raw,
+            heartbeat_age_seconds=round(heartbeat_age_s, 1) if heartbeat_age_s is not None else None,
+            jobs=jobs,
+            total_opportunities=total_opportunities,
+            by_venue=by_venue,
+            by_chain=by_chain,
+        )
+    finally:
+        await r.aclose()
+
+
+async def _publish_trigger(job: str = "full_ingestion") -> bool:
+    """Try to publish a trigger to the worker via Redis pub/sub.
+
+    Returns True if the message was published, False if Redis is unavailable.
+    """
+    try:
+        import json
+
+        import redis.asyncio as aioredis
+        from app.core.config import settings as app_settings
+
+        r = aioredis.from_url(
+            app_settings.redis_url,
+            decode_responses=True,
+            socket_connect_timeout=2.0,
+        )
+        await r.publish(
+            "yos:worker:trigger",
+            json.dumps({"job": job}),
+        )
+        await r.aclose()
+        return True
+    except Exception as exc:
+        log.warning("redis_trigger_failed", error=str(exc))
+        return False
+
+
 @router.post("/ingest", response_model=IngestResult)
 async def trigger_ingest(db: AsyncSession = Depends(get_db)) -> IngestResult:
     """
-    Trigger an immediate DeFiLlama + Morpho + Kamino ingestion run.
+    Trigger an immediate ingestion run.
 
-    DeFiLlama is always available (no key required).
-    Morpho and Kamino use public APIs.
-    Aave requires AAVE_SUBGRAPH_KEY in the environment.
+    Publishes to the worker process via Redis pub/sub.  If Redis is
+    unavailable, falls back to running ingestion inline.
     """
     now = datetime.now(UTC)
+
+    enqueued = await _publish_trigger("full_ingestion")
+    if enqueued:
+        log.info("admin_ingest_enqueued")
+        return IngestResult(
+            triggered_at=now,
+            defillama={"status": "enqueued_to_worker"},
+            aave={"status": "enqueued_to_worker"},
+            morpho={"status": "enqueued_to_worker"},
+            kamino={"status": "enqueued_to_worker"},
+        )
+
+    # Fallback: run inline if worker/Redis unavailable
+    log.info("admin_ingest_inline_fallback")
 
     # DeFiLlama (lending + staking)
     defillama_counts = await defillama_ingest_all(db)
@@ -276,30 +473,29 @@ async def trigger_ingest(db: AsyncSession = Depends(get_db)) -> IngestResult:
     except Exception as exc:
         log.warning("admin_ingest_coingecko_error", error=str(exc))
 
-    # Internal exchange connectors — populate derivatives_snapshots from Binance/OKX REST
-    internal_counts: dict = {}
+    # Internal exchange connectors
     try:
         from app.services.internal_ingestion import ingest_all as internal_ingest_all
-        internal_counts = await internal_ingest_all(db)
+        await internal_ingest_all(db)
     except Exception as exc:
         log.warning("admin_ingest_internal_error", error=str(exc))
-        internal_counts = {"error": str(exc)}
 
-    # Protocol-native borrow rates (Aave, Kamino, Morpho Blue) → lending_market_snapshots
-    borrow_rate_counts: dict = {}
+    # Protocol-native borrow rates
     try:
         from app.services.lending_rate_ingestion import ingest_all_borrow_rates
-        borrow_rate_counts = await ingest_all_borrow_rates(db)
+        await ingest_all_borrow_rates(db)
     except Exception as exc:
         log.error("admin_ingest_borrow_rates_error", error=str(exc))
-        borrow_rate_counts = {"error": str(exc)}
 
-    log.info(
-        "admin_ingest_complete",
-        defillama=defillama_counts,
-        aave=aave_counts,
-        borrow_rates=borrow_rate_counts,
-    )
+    # Unified opportunity ingestion
+    try:
+        from app.services.opportunity_ingestion import OpportunityIngestionService
+        svc = OpportunityIngestionService()
+        await svc.run_full_ingestion(db)
+    except Exception as exc:
+        log.error("admin_ingest_opportunities_error", error=str(exc))
+
+    log.info("admin_ingest_complete_inline")
     return IngestResult(
         triggered_at=now,
         defillama=defillama_counts,

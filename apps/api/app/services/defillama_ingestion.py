@@ -20,10 +20,14 @@ from datetime import UTC, datetime
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from asset_registry import AssetNormalizer, Venue
+
 from app.connectors.defillama_client import DeFiLlamaClient, DeFiLlamaPool
 from app.core.config import settings
 from app.models.snapshot import LendingMarketSnapshot
 from app.models.staking import StakingSnapshot
+
+_normalizer = AssetNormalizer()
 
 log = structlog.get_logger(__name__)
 
@@ -109,13 +113,40 @@ SYMBOL_ALIASES: dict[str, list[str]] = {
 
 
 # ---------------------------------------------------------------------------
+# Dynamic symbol acceptance (static Big 5 + top-500 token universe)
+# ---------------------------------------------------------------------------
+
+
+def _get_accepted_symbols() -> frozenset[str]:
+    """Return the set of symbols accepted for DeFiLlama ingestion.
+
+    Merges the static ``TRACKED_LENDING_SYMBOLS`` with the dynamic
+    token universe (top 500 by market cap).  If the universe hasn't
+    loaded yet, falls back to the static set only.
+    """
+    try:
+        from app.services.token_universe import get_token_universe
+
+        universe = get_token_universe()
+        dynamic = universe.get_all_symbols()
+        if dynamic:
+            return TRACKED_LENDING_SYMBOLS | dynamic
+    except Exception:
+        pass
+    return TRACKED_LENDING_SYMBOLS
+
+
+# ---------------------------------------------------------------------------
 # Normalization helpers
 # ---------------------------------------------------------------------------
 
 
 def _lending_row(pool: DeFiLlamaPool, now: datetime) -> LendingMarketSnapshot:
+    # Normalise DeFiLlama symbol (may include chain: prefix) to canonical ID
+    canonical = _normalizer.normalize_or_passthrough(Venue.DEFILLAMA, pool.symbol)
+    # TODO: full normalization migration — propagate canonical_id column once schema updated
     return LendingMarketSnapshot(
-        symbol=pool.symbol.upper(),
+        symbol=canonical,
         protocol=pool.project,
         market=pool.pool,
         chain=pool.chain,
@@ -134,9 +165,13 @@ def _lending_row(pool: DeFiLlamaPool, now: datetime) -> LendingMarketSnapshot:
 
 def _staking_row(pool: DeFiLlamaPool, now: datetime) -> StakingSnapshot:
     sym = pool.symbol.upper()
+    # Normalise DeFiLlama symbol to canonical ID; resolve underlying from registry
+    canonical = _normalizer.normalize_or_passthrough(Venue.DEFILLAMA, pool.symbol)
+    underlying = STAKING_UNDERLYING.get(sym, sym)
+    # TODO: full normalization migration — propagate canonical_id column once schema updated
     return StakingSnapshot(
-        symbol=sym,
-        underlying_symbol=STAKING_UNDERLYING.get(sym, sym),
+        symbol=canonical,
+        underlying_symbol=underlying,
         protocol=pool.project,
         chain=pool.chain,
         pool_id=pool.pool,
@@ -163,11 +198,12 @@ async def ingest_lending(db: AsyncSession) -> int:
         all_pools = await client.fetch_pools()
 
     now = datetime.now(UTC)
+    accepted_symbols = _get_accepted_symbols()
     rows = [
         _lending_row(p, now)
         for p in all_pools
         if p.project in LENDING_PROTOCOLS
-        and p.symbol.upper() in TRACKED_LENDING_SYMBOLS
+        and p.symbol.upper() in accepted_symbols
     ]
     db.add_all(rows)
     await db.commit()

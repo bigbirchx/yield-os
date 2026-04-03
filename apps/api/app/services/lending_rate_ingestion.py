@@ -22,9 +22,9 @@ from datetime import UTC, datetime
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.connectors.aave_client import AaveClient, AaveReserve, DEFAULT_CHAIN_IDS
-from app.connectors.kamino_client import KaminoClient, KaminoReserveMetrics
-from app.connectors.morpho_client import MorphoClient, MorphoMarket
+from app.connectors.aave_client_legacy import AaveClient, AaveReserve, DEFAULT_CHAIN_IDS
+from app.connectors.kamino_client_legacy import KaminoClient, KaminoReserveMetrics
+from app.connectors.morpho_client_legacy import MorphoClient, MorphoMarket
 from app.core.config import settings
 from app.models.snapshot import LendingMarketSnapshot
 

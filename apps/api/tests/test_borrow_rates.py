@@ -64,7 +64,7 @@ _AAVE_RESERVE_RAW = {
 
 
 def test_aave_reserve_parsing():
-    from app.connectors.aave_client import AaveReserve
+    from app.connectors.aave_client_legacy import AaveReserve
 
     r = AaveReserve.model_validate(_AAVE_RESERVE_RAW)
     r.market_name = "AaveV3Ethereum"
@@ -83,7 +83,7 @@ def test_aave_reserve_parsing():
 
 def test_aave_row_apy_conversion():
     """_aave_row must convert decimal fractions to percentage format."""
-    from app.connectors.aave_client import AaveReserve
+    from app.connectors.aave_client_legacy import AaveReserve
     from app.services.lending_rate_ingestion import _aave_row
 
     r = AaveReserve.model_validate(_AAVE_RESERVE_RAW)
@@ -107,7 +107,7 @@ def test_aave_row_apy_conversion():
 
 
 def test_aave_row_skips_frozen_reserve():
-    from app.connectors.aave_client import AaveReserve
+    from app.connectors.aave_client_legacy import AaveReserve
     from app.services.lending_rate_ingestion import _aave_row
 
     raw = {**_AAVE_RESERVE_RAW, "isFrozen": True}
@@ -139,7 +139,7 @@ _KAMINO_RESERVE_RAW = {
 
 
 def test_kamino_reserve_parsing():
-    from app.connectors.kamino_client import KaminoReserveMetrics
+    from app.connectors.kamino_client_legacy import KaminoReserveMetrics
 
     r = KaminoReserveMetrics.model_validate(_KAMINO_RESERVE_RAW)
     assert r.symbol == "USDC"
@@ -150,7 +150,7 @@ def test_kamino_reserve_parsing():
 
 def test_kamino_row_apy_conversion():
     """_kamino_row must convert decimal fractions to percentage format."""
-    from app.connectors.kamino_client import KaminoReserveMetrics
+    from app.connectors.kamino_client_legacy import KaminoReserveMetrics
     from app.services.lending_rate_ingestion import _kamino_row
 
     r = KaminoReserveMetrics.model_validate(_KAMINO_RESERVE_RAW)
@@ -191,7 +191,7 @@ _MORPHO_MARKET_RAW = {
 
 
 def test_morpho_market_parsing():
-    from app.connectors.morpho_client import MorphoMarket
+    from app.connectors.morpho_client_legacy import MorphoMarket
 
     m = MorphoMarket.model_validate(_MORPHO_MARKET_RAW)
     assert m.loan_token.symbol == "USDC"
@@ -204,7 +204,7 @@ def test_morpho_market_parsing():
 
 def test_morpho_row_apy_conversion():
     """_morpho_row must convert decimal fractions to percentage format."""
-    from app.connectors.morpho_client import MorphoMarket
+    from app.connectors.morpho_client_legacy import MorphoMarket
     from app.services.lending_rate_ingestion import _morpho_row
 
     m = MorphoMarket.model_validate(_MORPHO_MARKET_RAW)
@@ -223,7 +223,7 @@ def test_morpho_row_apy_conversion():
 
 def test_morpho_row_filters_anomalous_apy():
     """Markets with borrowApy >= 5.0 (500%) should be dropped by the property cap."""
-    from app.connectors.morpho_client import MorphoMarket
+    from app.connectors.morpho_client_legacy import MorphoMarket
     from app.services.lending_rate_ingestion import _morpho_row
 
     raw = {
@@ -262,7 +262,7 @@ def test_lending_overview_endpoint_registered():
 
 
 def test_aave_row_uses_aave_protocol_label():
-    from app.connectors.aave_client import AaveReserve
+    from app.connectors.aave_client_legacy import AaveReserve
     from app.services.lending_rate_ingestion import _aave_row
 
     r = AaveReserve.model_validate(_AAVE_RESERVE_RAW)
@@ -276,7 +276,7 @@ def test_aave_row_uses_aave_protocol_label():
 
 
 def test_kamino_row_uses_kamino_protocol_label():
-    from app.connectors.kamino_client import KaminoReserveMetrics
+    from app.connectors.kamino_client_legacy import KaminoReserveMetrics
     from app.services.lending_rate_ingestion import _kamino_row
 
     r = KaminoReserveMetrics.model_validate(_KAMINO_RESERVE_RAW)
@@ -286,7 +286,7 @@ def test_kamino_row_uses_kamino_protocol_label():
 
 
 def test_morpho_row_uses_morpho_blue_protocol_label():
-    from app.connectors.morpho_client import MorphoMarket
+    from app.connectors.morpho_client_legacy import MorphoMarket
     from app.services.lending_rate_ingestion import _morpho_row
 
     m = MorphoMarket.model_validate(_MORPHO_MARKET_RAW)

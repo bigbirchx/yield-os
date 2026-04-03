@@ -16,9 +16,13 @@ import structlog
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from asset_registry import AssetNormalizer, Venue
+
 from app.connectors.internal import exchange_client
 from app.connectors.internal.path_setup import _HAS_APIS
 from app.models.snapshot import DerivativesSnapshot
+
+_normalizer = AssetNormalizer()
 
 log = structlog.get_logger(__name__)
 
@@ -84,8 +88,13 @@ async def _ingest_coin_exchange(
     # 8-hour funding rate  ≈ annualized / (365 * 3)
     funding_per_period = funding_ann / (365 * 3) if funding_ann else None
 
+    # Normalise to canonical ID; fall back to raw symbol if unrecognised
+    venue_enum = Venue.BINANCE if exchange == "binance" else Venue.OKX
+    canonical = _normalizer.normalize_or_passthrough(venue_enum, base_ccy.upper())
+    # TODO: full normalization migration — propagate canonical_id column once schema updated
+
     row = DerivativesSnapshot(
-        symbol=base_ccy.upper(),
+        symbol=canonical,
         venue=exchange,
         funding_rate=funding_per_period,
         open_interest_usd=oi_usd,

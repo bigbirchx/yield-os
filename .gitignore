@@ -30,3 +30,9 @@ apps/web/.env.local
 # OS
 .DS_Store
 Thumbs.db
+
+# IDE / editor state
+.cursor/
+
+# Local data files (Excel workbooks, CSVs, etc.)
+data/

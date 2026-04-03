@@ -31,8 +31,8 @@ services:
 
   api:
     build:
-      context: ./apps/api
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: apps/api/Dockerfile
     restart: unless-stopped
     env_file: .env
     environment:
@@ -48,11 +48,49 @@ services:
         condition: service_healthy
     volumes:
       - ./apps/api:/app
+      # Mount monorepo packages for live edits during development
+      - ./packages/asset-registry:/packages/asset-registry
+      - ./packages/opportunity-schema:/packages/opportunity-schema
       # Mount reference codebase read-only so internal connectors can import it
       - /home/ec2-user/workspace:/home/ec2-user/workspace:ro
     command: >
       sh -c "alembic upgrade head &&
              uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+
+  worker:
+    build:
+      context: .
+      dockerfile: apps/worker/Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_started
+    volumes:
+      # Mount source for development hot-reload (same pattern as API)
+      - ./apps/api:/api-src
+      - ./apps/worker:/worker-src
+      - ./packages/asset-registry:/packages/asset-registry
+      - ./packages/opportunity-schema:/packages/opportunity-schema
+      # Mount reference codebase read-only so internal connectors can import it
+      - /home/ec2-user/workspace:/home/ec2-user/workspace:ro
+    healthcheck:
+      # Worker writes yos:worker:heartbeat to Redis every 30s (TTL 90s).
+      # If the key is missing, the worker process has stalled or crashed.
+      test: ["CMD-SHELL", "redis-cli -h redis GET yos:worker:heartbeat | grep -q T"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    command: ["python", "/worker-src/main.py"]
 
   web:
     build:
